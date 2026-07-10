@@ -51,4 +51,10 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
     manageDiskPartitions: () => electron_1.ipcRenderer.invoke('manage-disk-partitions'),
     deleteRecentItems: () => electron_1.ipcRenderer.invoke('delete-recent-items'),
     deleteAddressBarHistory: () => electron_1.ipcRenderer.invoke('delete-address-bar-history'),
+    checkIobitInstalled: () => electron_1.ipcRenderer.invoke('check-iobit-installed'),
+    getFileLockingProcesses: (targetPath) => electron_1.ipcRenderer.invoke('get-file-locking-processes', targetPath),
+    unlockFileNative: (targetPath, actionType, actionArgs) => electron_1.ipcRenderer.invoke('unlock-file-native', targetPath, actionType, actionArgs),
+    unlockFileIobit: (targetPath, actionType, modifier, actionArgs) => electron_1.ipcRenderer.invoke('unlock-file-iobit', targetPath, actionType, modifier, actionArgs),
+    selectFileDialog: () => electron_1.ipcRenderer.invoke('select-file-dialog'),
+    selectFolderDialog: () => electron_1.ipcRenderer.invoke('select-folder-dialog'),
 });

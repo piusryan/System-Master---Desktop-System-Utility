@@ -48,6 +48,23 @@ export interface ElectronAPI {
   manageDiskPartitions: () => Promise<string>
   deleteRecentItems: () => Promise<string>
   deleteAddressBarHistory: () => Promise<string>
+  checkIobitInstalled: () => Promise<boolean>
+  getFileLockingProcesses: (targetPath: string) => Promise<Array<{ pid: number; name: string; path: string }>>
+  unlockFileNative: (targetPath: string, actionType: 'unlock' | 'delete' | 'rename' | 'move' | 'copy', actionArgs?: any) => Promise<{
+    success: boolean
+    killedPids: number[]
+    killSummary: string
+    actionSummary: string
+  }>
+  unlockFileIobit: (targetPath: string, actionType: 'unlock' | 'delete' | 'rename' | 'move' | 'copy', modifier: 'normal' | 'advanced', actionArgs?: any) => Promise<{
+    success: boolean
+    stdout: string
+    stderr: string
+    commandRun: string
+    error?: string
+  }>
+  selectFileDialog: () => Promise<string | null>
+  selectFolderDialog: () => Promise<string | null>
 }
 
 declare global {

@@ -50,4 +50,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   manageDiskPartitions: () => ipcRenderer.invoke('manage-disk-partitions'),
   deleteRecentItems: () => ipcRenderer.invoke('delete-recent-items'),
   deleteAddressBarHistory: () => ipcRenderer.invoke('delete-address-bar-history'),
+  checkIobitInstalled: () => ipcRenderer.invoke('check-iobit-installed'),
+  getFileLockingProcesses: (targetPath: string) => ipcRenderer.invoke('get-file-locking-processes', targetPath),
+  unlockFileNative: (targetPath: string, actionType: 'unlock' | 'delete' | 'rename' | 'move' | 'copy', actionArgs?: any) => 
+    ipcRenderer.invoke('unlock-file-native', targetPath, actionType, actionArgs),
+  unlockFileIobit: (targetPath: string, actionType: 'unlock' | 'delete' | 'rename' | 'move' | 'copy', modifier: 'normal' | 'advanced', actionArgs?: any) => 
+    ipcRenderer.invoke('unlock-file-iobit', targetPath, actionType, modifier, actionArgs),
+  selectFileDialog: () => ipcRenderer.invoke('select-file-dialog'),
+  selectFolderDialog: () => ipcRenderer.invoke('select-folder-dialog'),
 })

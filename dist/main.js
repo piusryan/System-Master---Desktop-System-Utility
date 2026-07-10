@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
 const path = __importStar(require("path"));
+const fs = __importStar(require("fs"));
 const child_process_1 = require("child_process");
 // Custom exec function that doesn't throw on non-zero exit codes
 const execCommand = (command) => {
@@ -64,7 +65,14 @@ function createWindow() {
     // Check if in development mode or production
     const isDev = !electron_1.app.isPackaged;
     if (isDev) {
-        mainWindow.loadURL('http://localhost:3000');
+        // Try to load from dev server, fall back to built files if not available
+        mainWindow.loadURL('http://localhost:3000')
+            .catch(() => {
+            console.log('Dev server not available, loading from built files');
+            if (mainWindow) {
+                mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+            }
+        });
         mainWindow.webContents.openDevTools();
     }
     else {
@@ -438,4 +446,295 @@ electron_1.ipcMain.handle('delete-address-bar-history', async () => {
     const command = 'reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\TypedPaths" /f';
     const { stdout, stderr } = await execCommand(command);
     return `Address Bar History Deleted:\n${stdout}${stderr ? `\nErrors: ${stderr}` : ''}`;
+});
+// --- FILE UNLOCKER INTEGRATION ---
+const UNLOCKER_PS_SCRIPT = `
+param([string]$Path)
+
+$csharp = @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+
+namespace FileUnlocker {
+    public class Win32 {
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RM_UNIQUE_PROCESS {
+            public int dwProcessId;
+            public System.Runtime.InteropServices.ComTypes.FILETIME ProcessStartTime;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct RM_PROCESS_INFO {
+            public RM_UNIQUE_PROCESS Process;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+            public string strAppName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]
+            public string strServiceShortName;
+            public int ApplicationType;
+            public uint AppStatus;
+            public uint TSSessionId;
+            [MarshalAs(UnmanagedType.Bool)]
+            public bool bRestartable;
+        }
+
+        [DllImport("rstrtmgr.dll", CharSet = CharSet.Auto)]
+        public static extern int RmStartSession(out uint pSessionHandle, int dwSessionFlags, string strSessionKey);
+
+        [DllImport("rstrtmgr.dll")]
+        public static extern int RmEndSession(uint pSessionHandle);
+
+        [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)]
+        public static extern int RmRegisterResources(uint pSessionHandle, uint nFiles, string[] rgsFilenames,
+            uint nApplications, RM_UNIQUE_PROCESS[] rgApplications, uint nServices, string[] rgsServiceNames);
+
+        [DllImport("rstrtmgr.dll")]
+        public static extern int RmGetList(uint dwSessionHandle, out uint pnProcInfoNeeded, ref uint pnProcInfo,
+            [In, Out] RM_PROCESS_INFO[] rgAffectedApps, ref uint lpdwRebootReasons);
+
+        public static int[] GetLockingProcessIds(string[] filePaths) {
+            List<int> pids = new List<int>();
+            uint handle;
+            string key = Guid.NewGuid().ToString();
+            int res = RmStartSession(out handle, 0, key);
+            if (res != 0) return pids.ToArray();
+
+            try {
+                res = RmRegisterResources(handle, (uint)filePaths.Length, filePaths, 0, null, 0, null);
+                if (res != 0) return pids.ToArray();
+
+                uint pnProcInfoNeeded = 0;
+                uint pnProcInfo = 0;
+                uint rebootReasons = 0;
+
+                res = RmGetList(handle, out pnProcInfoNeeded, ref pnProcInfo, null, ref rebootReasons);
+                if (res == 234) { // ERROR_MORE_DATA
+                    RM_PROCESS_INFO[] processInfo = new RM_PROCESS_INFO[pnProcInfoNeeded];
+                    pnProcInfo = pnProcInfoNeeded;
+                    res = RmGetList(handle, out pnProcInfoNeeded, ref pnProcInfo, processInfo, ref rebootReasons);
+                    if (res == 0) {
+                        for (int i = 0; i < pnProcInfo; i++) {
+                            pids.Add(processInfo[i].Process.dwProcessId);
+                        }
+                    }
+                }
+            } finally {
+                RmEndSession(handle);
+            }
+            return pids.ToArray();
+        }
+    }
+}
+'@
+
+try {
+    Add-Type -TypeDefinition $csharp -ReferencedAssemblies 'System.Runtime.InteropServices'
+} catch {}
+
+$files = @()
+if (Test-Path $Path) {
+    $item = Get-Item $Path
+    if ($item.PSIsContainer) {
+        $files = Get-ChildItem -Path $Path -File -Recurse | Select-Object -First 500 | ForEach-Object { $_.FullName }
+    } else {
+        $files = @($item.FullName)
+    }
+}
+
+if ($files.Count -eq 0) {
+    Write-Output "[]"
+    exit
+}
+
+$pids = [FileUnlocker.Win32]::GetLockingProcessIds($files)
+$results = @()
+foreach ($pid in $pids) {
+    $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+    if ($proc) {
+        $results += [PSCustomObject]@{
+            pid = $pid
+            name = $proc.Name
+            path = $proc.Path
+        }
+    } else {
+        $results += [PSCustomObject]@{
+            pid = $pid
+            name = "Unknown"
+            path = ""
+        }
+    }
+}
+$results | ConvertTo-Json
+`;
+const runPowerShellScript = async (scriptContent, args) => {
+    const tempScriptPath = path.join(electron_1.app.getPath('temp'), `unlocker_helper_${Date.now()}.ps1`);
+    fs.writeFileSync(tempScriptPath, scriptContent, 'utf-8');
+    try {
+        const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${tempScriptPath}" ${args}`;
+        const result = await execCommand(cmd);
+        return result;
+    }
+    finally {
+        try {
+            fs.unlinkSync(tempScriptPath);
+        }
+        catch { }
+    }
+};
+electron_1.ipcMain.handle('check-iobit-installed', async () => {
+    const iobitPath = 'C:\\Program Files (x86)\\IObit\\IObit Unlocker\\IObitUnlocker.exe';
+    return fs.existsSync(iobitPath);
+});
+electron_1.ipcMain.handle('get-file-locking-processes', async (_, targetPath) => {
+    const { stdout, stderr } = await runPowerShellScript(UNLOCKER_PS_SCRIPT, `-Path "${targetPath.replace(/"/g, '\\"')}"`);
+    if (stderr && !stdout) {
+        console.error('PowerShell error querying locks:', stderr);
+        return [];
+    }
+    try {
+        const text = stdout.trim();
+        if (!text || text === '[]')
+            return [];
+        const parsed = JSON.parse(text);
+        return Array.isArray(parsed) ? parsed : [parsed];
+    }
+    catch (e) {
+        console.error('Failed to parse locking processes:', e);
+        return [];
+    }
+});
+electron_1.ipcMain.handle('unlock-file-native', async (_, targetPath, actionType, actionArgs) => {
+    // First query locking processes
+    const { stdout } = await runPowerShellScript(UNLOCKER_PS_SCRIPT, `-Path "${targetPath.replace(/"/g, '\\"')}"`);
+    let pids = [];
+    try {
+        const text = stdout.trim();
+        if (text && text !== '[]') {
+            const parsed = JSON.parse(text);
+            const arr = Array.isArray(parsed) ? parsed : [parsed];
+            pids = arr.map((p) => p.pid).filter((pid) => typeof pid === 'number');
+        }
+    }
+    catch { }
+    // Kill the locking processes
+    const killResults = [];
+    for (const pid of pids) {
+        try {
+            process.kill(pid, 'SIGKILL');
+            killResults.push(`Killed PID ${pid} natively`);
+        }
+        catch (err) {
+            // Fallback to elevated taskkill if SIGKILL fails (e.g. process context issues)
+            const { stderr } = await execCommand(`taskkill /f /pid ${pid}`);
+            if (!stderr) {
+                killResults.push(`Killed PID ${pid} via taskkill`);
+            }
+            else {
+                killResults.push(`Failed to kill PID ${pid}: ${err.message || stderr}`);
+            }
+        }
+    }
+    // Execute requested file action
+    let actionResult = '';
+    try {
+        if (actionType === 'delete') {
+            if (fs.statSync(targetPath).isDirectory()) {
+                fs.rmSync(targetPath, { recursive: true, force: true });
+            }
+            else {
+                fs.unlinkSync(targetPath);
+            }
+            actionResult = 'File/Folder deleted successfully.';
+        }
+        else if (actionType === 'rename') {
+            const newPath = actionArgs?.newPath;
+            if (!newPath)
+                throw new Error('New path is required for rename.');
+            fs.renameSync(targetPath, newPath);
+            actionResult = `File/Folder renamed successfully to ${path.basename(newPath)}.`;
+        }
+        else if (actionType === 'move') {
+            const destPath = actionArgs?.destPath;
+            if (!destPath)
+                throw new Error('Destination path is required for move.');
+            fs.renameSync(targetPath, destPath);
+            actionResult = `File/Folder moved successfully to ${destPath}.`;
+        }
+        else if (actionType === 'copy') {
+            const destPath = actionArgs?.destPath;
+            if (!destPath)
+                throw new Error('Destination path is required for copy.');
+            if (fs.statSync(targetPath).isDirectory()) {
+                fs.cpSync(targetPath, destPath, { recursive: true });
+            }
+            else {
+                fs.copyFileSync(targetPath, destPath);
+            }
+            actionResult = `File/Folder copied successfully to ${destPath}.`;
+        }
+        else {
+            actionResult = 'File/Folder unlocked successfully.';
+        }
+    }
+    catch (err) {
+        actionResult = `Action failed: ${err.message}`;
+    }
+    return {
+        success: !actionResult.startsWith('Action failed'),
+        killedPids: pids,
+        killSummary: killResults.join('\n'),
+        actionSummary: actionResult
+    };
+});
+electron_1.ipcMain.handle('unlock-file-iobit', async (_, targetPath, actionType, modifier, actionArgs) => {
+    const iobitPath = 'C:\\Program Files (x86)\\IObit\\IObit Unlocker\\IObitUnlocker.exe';
+    if (!fs.existsSync(iobitPath)) {
+        return { success: false, error: 'IObit Unlocker is not installed.' };
+    }
+    let cmdParam = '/None';
+    if (actionType === 'delete')
+        cmdParam = '/Delete';
+    else if (actionType === 'rename')
+        cmdParam = '/Rename';
+    else if (actionType === 'move')
+        cmdParam = '/Move';
+    else if (actionType === 'copy')
+        cmdParam = '/Copy';
+    const optParam = modifier === 'advanced' ? '/Advanced' : '/Normal';
+    let extraArgsStr = '';
+    if (actionType === 'rename' && actionArgs?.newName) {
+        extraArgsStr = ` "${actionArgs.newName}"`;
+    }
+    else if ((actionType === 'move' || actionType === 'copy') && actionArgs?.destPath) {
+        extraArgsStr = ` "${actionArgs.destPath}"`;
+    }
+    const fullCmd = `"${iobitPath}" ${cmdParam} ${optParam} "${targetPath}"${extraArgsStr}`;
+    const { stdout, stderr } = await execCommand(fullCmd);
+    // Auto-dismiss the popup dialog that IObit Unlocker shows on completion
+    setTimeout(async () => {
+        await execCommand('taskkill /f /im IObitUnlocker.exe');
+    }, 2000);
+    return {
+        success: true,
+        stdout,
+        stderr,
+        commandRun: fullCmd
+    };
+});
+electron_1.ipcMain.handle('select-file-dialog', async () => {
+    if (!mainWindow)
+        return null;
+    const { canceled, filePaths } = await electron_1.dialog.showOpenDialog(mainWindow, {
+        properties: ['openFile', 'showHiddenFiles']
+    });
+    return canceled ? null : filePaths[0];
+});
+electron_1.ipcMain.handle('select-folder-dialog', async () => {
+    if (!mainWindow)
+        return null;
+    const { canceled, filePaths } = await electron_1.dialog.showOpenDialog(mainWindow, {
+        properties: ['openDirectory', 'showHiddenFiles']
+    });
+    return canceled ? null : filePaths[0];
 });

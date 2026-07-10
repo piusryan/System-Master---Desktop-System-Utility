@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import { Zap, Wifi, Wrench, Hammer } from 'lucide-react'
+import { Zap, Wifi, Wrench, Hammer, Unlock } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
 import Network from './pages/Network'
 import SystemRepairAndClean from './pages/SystemRepairAndClean'
 import FixRepair from './pages/FixRepair'
+import FileUnlocker from './pages/FileUnlocker'
 
-type Page = 'dashboard' | 'network' | 'system-repair-and-clean' | 'fix-repair'
+type Page = 'dashboard' | 'network' | 'system-repair-and-clean' | 'fix-repair' | 'file-unlocker'
 
 function App() {
   const [activePage, setActivePage] = useState<Page>('dashboard')
@@ -16,6 +17,7 @@ function App() {
     { id: 'system-repair-and-clean', icon: <Wrench className="w-5 h-5" />, label: 'System repair and clean' },
     { id: 'fix-repair', icon: <Hammer className="w-5 h-5" />, label: 'Fix & Repair' },
     { id: 'network', icon: <Wifi className="w-5 h-5" />, label: 'Network & Connectivity' },
+    { id: 'file-unlocker', icon: <Unlock className="w-5 h-5 text-accent-400" />, label: 'File Unlocker' },
   ]
 
   const renderPage = () => {
@@ -28,6 +30,8 @@ function App() {
         return <FixRepair />
       case 'network':
         return <Network />
+      case 'file-unlocker':
+        return <FileUnlocker />
       default:
         return <Dashboard setActivePage={setActivePage as any} />
     }
