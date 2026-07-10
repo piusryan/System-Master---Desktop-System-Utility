@@ -1,0 +1,10 @@
+directories:
+  output: release
+  buildResources: build
+appId: com.systemmaster.app
+productName: System Master
+win:
+  target: nsis
+  icon: build/icon.ico
+files: []
+electronVersion: 41.10.1
