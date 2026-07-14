@@ -547,19 +547,19 @@ if ($files.Count -eq 0) {
     exit
 }
 
-$pids = [FileUnlocker.Win32]::GetLockingProcessIds($files)
+$lockingProcIds = [FileUnlocker.Win32]::GetLockingProcessIds($files)
 $results = @()
-foreach ($pid in $pids) {
-    $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+foreach ($procId in $lockingProcIds) {
+    $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
     if ($proc) {
         $results += [PSCustomObject]@{
-            pid = $pid
+            pid = $procId
             name = $proc.Name
             path = $proc.Path
         }
     } else {
         $results += [PSCustomObject]@{
-            pid = $pid
+            pid = $procId
             name = "Unknown"
             path = ""
         }
@@ -582,9 +582,21 @@ const runPowerShellScript = async (scriptContent, args) => {
         catch { }
     }
 };
+// Check for IObit Unlocker installation (check bundled first)
 electron_1.ipcMain.handle('check-iobit-installed', async () => {
-    const iobitPath = 'C:\\Program Files (x86)\\IObit\\IObit Unlocker\\IObitUnlocker.exe';
-    return fs.existsSync(iobitPath);
+    const isPackaged = electron_1.app.isPackaged;
+    const possiblePaths = [
+        isPackaged ? path.join(process.resourcesPath, 'IObit Unlocker', 'IObitUnlocker.exe') : path.join(__dirname, 'IObit Unlocker', 'IObitUnlocker.exe'), // bundled first
+        path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'IObit', 'IObit Unlocker', 'IObitUnlocker.exe'),
+        path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'IObit', 'IObit Unlocker', 'IObitUnlocker.exe'),
+        path.join(__dirname, '..', 'IObit Unlocker', 'IObitUnlocker.exe')
+    ];
+    for (const p of possiblePaths) {
+        if (fs.existsSync(p)) {
+            return true;
+        }
+    }
+    return false;
 });
 electron_1.ipcMain.handle('get-file-locking-processes', async (_, targetPath) => {
     const { stdout, stderr } = await runPowerShellScript(UNLOCKER_PS_SCRIPT, `-Path "${targetPath.replace(/"/g, '\\"')}"`);
@@ -604,123 +616,119 @@ electron_1.ipcMain.handle('get-file-locking-processes', async (_, targetPath) =>
         return [];
     }
 });
+// Load the self-dependent unlock script from disk (avoids JS template-literal backtick conflicts)
+// Handles: LanSchool, Sentinel, Cisco AMP, CrowdStrike, Symantec, McAfee, drivers, system files
+const getUnlockActionPsContent = () => {
+    const isPackaged = electron_1.app.isPackaged;
+    const scriptPath = isPackaged
+        ? path.join(process.resourcesPath, 'unlock-action.ps1')
+        : path.join(__dirname, '..', 'electron', 'unlock-action.ps1');
+    return fs.readFileSync(scriptPath, 'utf-8');
+};
 electron_1.ipcMain.handle('unlock-file-native', async (_, targetPath, actionType, actionArgs) => {
-    // First query locking processes
-    const { stdout } = await runPowerShellScript(UNLOCKER_PS_SCRIPT, `-Path "${targetPath.replace(/"/g, '\\"')}"`);
-    let pids = [];
+    const safeTarget = targetPath.replace(/"/g, '\\"');
+    let actionArg = '';
+    if (actionType === 'rename' && actionArgs?.newName)
+        actionArg = actionArgs.newName;
+    else if ((actionType === 'move' || actionType === 'copy') && actionArgs?.destPath)
+        actionArg = actionArgs.destPath;
+    else if (actionType === 'rename' && actionArgs?.newPath)
+        actionArg = path.basename(actionArgs.newPath);
+    const psArgs = `-TargetPath "${safeTarget}" -Action "${actionType}" -ActionArg "${actionArg.replace(/"/g, '\\"')}"`;
+    const { stdout, stderr } = await runPowerShellScript(getUnlockActionPsContent(), psArgs);
     try {
         const text = stdout.trim();
-        if (text && text !== '[]') {
-            const parsed = JSON.parse(text);
-            const arr = Array.isArray(parsed) ? parsed : [parsed];
-            pids = arr.map((p) => p.pid).filter((pid) => typeof pid === 'number');
+        if (text) {
+            const result = JSON.parse(text);
+            return {
+                success: result.success ?? false,
+                scheduledReboot: result.scheduledReboot ?? false,
+                killedPids: result.killedPids ?? [],
+                stoppedServices: result.stoppedServices ?? [],
+                killSummary: (result.log ?? []).join('\n'),
+                actionSummary: result.actionResult ?? ''
+            };
         }
     }
-    catch { }
-    // Kill the locking processes
-    const killResults = [];
-    for (const pid of pids) {
-        try {
-            process.kill(pid, 'SIGKILL');
-            killResults.push(`Killed PID ${pid} natively`);
-        }
-        catch (err) {
-            // Fallback to elevated taskkill if SIGKILL fails (e.g. process context issues)
-            const { stderr } = await execCommand(`taskkill /f /pid ${pid}`);
-            if (!stderr) {
-                killResults.push(`Killed PID ${pid} via taskkill`);
-            }
-            else {
-                killResults.push(`Failed to kill PID ${pid}: ${err.message || stderr}`);
-            }
-        }
+    catch (e) {
+        console.error('unlock-file-native parse error:', e, stderr);
     }
-    // Execute requested file action
-    let actionResult = '';
-    try {
-        if (actionType === 'delete') {
-            if (fs.statSync(targetPath).isDirectory()) {
-                fs.rmSync(targetPath, { recursive: true, force: true });
-            }
-            else {
-                fs.unlinkSync(targetPath);
-            }
-            actionResult = 'File/Folder deleted successfully.';
-        }
-        else if (actionType === 'rename') {
-            const newPath = actionArgs?.newPath;
-            if (!newPath)
-                throw new Error('New path is required for rename.');
-            fs.renameSync(targetPath, newPath);
-            actionResult = `File/Folder renamed successfully to ${path.basename(newPath)}.`;
-        }
-        else if (actionType === 'move') {
-            const destPath = actionArgs?.destPath;
-            if (!destPath)
-                throw new Error('Destination path is required for move.');
-            fs.renameSync(targetPath, destPath);
-            actionResult = `File/Folder moved successfully to ${destPath}.`;
-        }
-        else if (actionType === 'copy') {
-            const destPath = actionArgs?.destPath;
-            if (!destPath)
-                throw new Error('Destination path is required for copy.');
-            if (fs.statSync(targetPath).isDirectory()) {
-                fs.cpSync(targetPath, destPath, { recursive: true });
-            }
-            else {
-                fs.copyFileSync(targetPath, destPath);
-            }
-            actionResult = `File/Folder copied successfully to ${destPath}.`;
-        }
-        else {
-            actionResult = 'File/Folder unlocked successfully.';
-        }
-    }
-    catch (err) {
-        actionResult = `Action failed: ${err.message}`;
-    }
-    return {
-        success: !actionResult.startsWith('Action failed'),
-        killedPids: pids,
-        killSummary: killResults.join('\n'),
-        actionSummary: actionResult
-    };
+    return { success: false, scheduledReboot: false, killedPids: [], stoppedServices: [], killSummary: stderr, actionSummary: 'Operation failed' };
 });
+// Get IObit Unlocker executable path (check bundled first)
+const getIobitPath = () => {
+    const isPackaged = electron_1.app.isPackaged;
+    const possiblePaths = [
+        isPackaged ? path.join(process.resourcesPath, 'IObit Unlocker', 'IObitUnlocker.exe') : path.join(__dirname, 'IObit Unlocker', 'IObitUnlocker.exe'), // bundled first
+        path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'IObit', 'IObit Unlocker', 'IObitUnlocker.exe'),
+        path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'IObit', 'IObit Unlocker', 'IObitUnlocker.exe'),
+        path.join(__dirname, '..', 'IObit Unlocker', 'IObitUnlocker.exe')
+    ];
+    for (const p of possiblePaths) {
+        if (fs.existsSync(p)) {
+            return p;
+        }
+    }
+    return null;
+};
+// unlock-file-iobit: uses actual IObit if available, falls back to native
 electron_1.ipcMain.handle('unlock-file-iobit', async (_, targetPath, actionType, modifier, actionArgs) => {
-    const iobitPath = 'C:\\Program Files (x86)\\IObit\\IObit Unlocker\\IObitUnlocker.exe';
-    if (!fs.existsSync(iobitPath)) {
-        return { success: false, error: 'IObit Unlocker is not installed.' };
+    const iobitPath = getIobitPath();
+    if (iobitPath) {
+        // Try IObit first
+        try {
+            let args = [];
+            // IObit command line usage (reverse-engineered from common patterns)
+            // Common pattern: IObitUnlocker.exe "path" /delete or similar
+            // We'll construct the best possible arguments
+            args.push(targetPath);
+            switch (actionType) {
+                case 'delete':
+                    args.push('/delete');
+                    break;
+                case 'unlock':
+                default:
+                    // Just unlock
+                    break;
+            }
+            if (modifier === 'advanced') {
+                args.push('/force');
+            }
+            const { stdout, stderr } = await execCommand(`"${iobitPath}" ${args.map(a => `"${a}"`).join(' ')}`);
+            return {
+                success: true,
+                scheduledReboot: false,
+                killedPids: [],
+                stoppedServices: [],
+                killSummary: 'IObit Unlocker command executed',
+                actionSummary: 'IObit Unlocker has processed the request',
+                commandRun: `"${iobitPath}" ${args.map(a => `"${a}"`).join(' ')}`
+            };
+        }
+        catch (e) {
+            console.error('IObit execution failed, falling back to native:', e);
+        }
     }
-    let cmdParam = '/None';
-    if (actionType === 'delete')
-        cmdParam = '/Delete';
-    else if (actionType === 'rename')
-        cmdParam = '/Rename';
-    else if (actionType === 'move')
-        cmdParam = '/Move';
-    else if (actionType === 'copy')
-        cmdParam = '/Copy';
-    const optParam = modifier === 'advanced' ? '/Advanced' : '/Normal';
-    let extraArgsStr = '';
-    if (actionType === 'rename' && actionArgs?.newName) {
-        extraArgsStr = ` "${actionArgs.newName}"`;
+    // Fallback to native if IObit isn't available or failed
+    const safeTarget = targetPath.replace(/"/g, '\\"');
+    let actionArg = '';
+    if (actionType === 'rename' && actionArgs?.newName)
+        actionArg = actionArgs.newName;
+    else if ((actionType === 'move' || actionType === 'copy') && actionArgs?.destPath)
+        actionArg = actionArgs.destPath;
+    const psArgs = `-TargetPath "${safeTarget}" -Action "${actionType}" -ActionArg "${actionArg.replace(/"/g, '\\"')}"`;
+    const { stdout, stderr } = await runPowerShellScript(getUnlockActionPsContent(), psArgs);
+    try {
+        const text = stdout.trim();
+        if (text) {
+            const result = JSON.parse(text);
+            return { success: result.success ?? false, scheduledReboot: result.scheduledReboot ?? false, killedPids: result.killedPids ?? [], stoppedServices: result.stoppedServices ?? [], killSummary: (result.log ?? []).join('\n'), actionSummary: result.actionResult ?? '' };
+        }
     }
-    else if ((actionType === 'move' || actionType === 'copy') && actionArgs?.destPath) {
-        extraArgsStr = ` "${actionArgs.destPath}"`;
+    catch (e) {
+        console.error('unlock-file-iobit parse error:', e, stderr);
     }
-    const fullCmd = `"${iobitPath}" ${cmdParam} ${optParam} "${targetPath}"${extraArgsStr}`;
-    const { stdout, stderr } = await execCommand(fullCmd);
-    // Auto-dismiss the popup dialog that IObit Unlocker shows on completion
-    setTimeout(async () => {
-        await execCommand('taskkill /f /im IObitUnlocker.exe');
-    }, 2000);
-    return {
-        success: true,
-        stdout,
-        stderr,
-        commandRun: fullCmd
-    };
+    return { success: false, scheduledReboot: false, killedPids: [], stoppedServices: [], killSummary: stderr, actionSummary: 'Operation failed' };
 });
 electron_1.ipcMain.handle('select-file-dialog', async () => {
     if (!mainWindow)

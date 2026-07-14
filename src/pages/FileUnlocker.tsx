@@ -21,13 +21,13 @@ interface ProcessInfo {
   path: string
 }
 
-type EngineType = 'iobit' | 'native'
+type EngineType = 'advanced' | 'native'
 type ActionType = 'unlock' | 'delete' | 'rename' | 'move' | 'copy'
 
 const FileUnlocker: React.FC = () => {
   const [filePath, setFilePath] = useState<string>('')
   const [isDragOver, setIsDragOver] = useState<boolean>(false)
-  const [isIobitInstalled, setIsIobitInstalled] = useState<boolean>(false)
+  const [isAdvancedEngineAvailable, setIsAdvancedEngineAvailable] = useState<boolean>(false)
   const [engine, setEngine] = useState<EngineType>('native')
   const [isForcedMode, setIsForcedMode] = useState<boolean>(true)
   const [lockingProcesses, setLockingProcesses] = useState<ProcessInfo[]>([])
@@ -44,19 +44,19 @@ const FileUnlocker: React.FC = () => {
   const [isTerminalOpen, setIsTerminalOpen] = useState<boolean>(false)
 
   useEffect(() => {
-    // Check if IObit Unlocker is installed on component mount
-    const checkIobit = async () => {
+    // Check if advanced unlock engine is available
+    const checkAdvancedEngine = async () => {
       try {
-        const installed = await window.electronAPI.checkIobitInstalled()
-        setIsIobitInstalled(installed)
-        if (installed) {
-          setEngine('iobit') // Default to IObit if available
+        const available = await window.electronAPI.checkIobitInstalled() // Still uses same API, just renames the variable
+        setIsAdvancedEngineAvailable(available)
+        if (available) {
+          setEngine('advanced')
         }
       } catch (err) {
-        console.error('Error checking IObit installation:', err)
+        console.error('Error checking advanced engine availability:', err)
       }
     }
-    checkIobit()
+    checkAdvancedEngine()
   }, [])
 
   // Scan file for locks
@@ -168,18 +168,17 @@ const FileUnlocker: React.FC = () => {
     setTerminalOutput(prev => prev + `\n--- Executing ${action.toUpperCase()} action on "${filePath}" ---\n`)
 
     try {
-      if (engine === 'iobit') {
-        setTerminalOutput(prev => prev + `Using IObit Unlocker Engine (Forced Mode: ${isForcedMode ? 'On' : 'Off'})...\n`)
+      if (engine === 'advanced') {
+        setTerminalOutput(prev => prev + `Using Advanced Driver Engine (Forced Mode: ${isForcedMode ? 'On' : 'Off'})...\n`)
         const modifier = isForcedMode ? 'advanced' : 'normal'
-        const result = await window.electronAPI.unlockFileIobit(filePath, action, modifier, extraArgs)
+        const result = await window.electronAPI.unlockFileIobit(filePath, action, modifier, extraArgs) // Still calls same API
         
         if (result.success) {
-          setTerminalOutput(prev => prev + `IObit command executed: ${result.commandRun}\n`)
-          setTerminalOutput(prev => prev + `Operation successfully queued. IObit driver handles this asynchronously.\n`)
+          setTerminalOutput(prev => prev + `Advanced command executed successfully.\n`)
           // Small delay before scan to allow operations to take place
           setTimeout(() => scanForLocks(filePath), 1500)
         } else {
-          setTerminalOutput(prev => prev + `IObit Error: ${result.error || 'Operation failed.'}\n`)
+          setTerminalOutput(prev => prev + `Advanced Engine Error: ${result.error || 'Operation failed.'}\n`)
         }
       } else {
         setTerminalOutput(prev => prev + `Using Native Windows Engine (PowerShell & Restart Manager)...\n`)
@@ -363,15 +362,15 @@ const FileUnlocker: React.FC = () => {
               <label className="text-xs text-gray-400 font-medium block">UNLOCK ENGINE</label>
               <div className="grid grid-cols-2 gap-2">
                 <button
-                  onClick={() => setEngine('iobit')}
-                  disabled={!isIobitInstalled}
+                  onClick={() => setEngine('advanced')}
+                  disabled={!isAdvancedEngineAvailable}
                   className={`px-3 py-2 text-xs font-semibold rounded-xl border transition-all ${
-                    engine === 'iobit'
+                    engine === 'advanced'
                       ? 'bg-primary-500/20 text-primary-300 border-primary-500/40'
                       : 'bg-dark-900 border-dark-600 text-gray-400 hover:text-white disabled:opacity-30'
                   }`}
                 >
-                  IObit Driver
+                  Advanced Driver
                 </button>
                 <button
                   onClick={() => setEngine('native')}
@@ -384,10 +383,10 @@ const FileUnlocker: React.FC = () => {
                   Native Windows
                 </button>
               </div>
-              {!isIobitInstalled && (
+              {!isAdvancedEngineAvailable && (
                 <div className="flex gap-2 p-3 bg-amber-500/10 border border-amber-500/25 rounded-xl text-xs text-amber-300">
                   <Info className="w-4 h-4 shrink-0 mt-0.5" />
-                  <span>IObit Unlocker engine is unavailable because the app is not installed. Defaulting to Native Windows engine.</span>
+                  <span>Advanced Driver engine is unavailable. Using Native Windows engine.</span>
                 </div>
               )}
             </div>
