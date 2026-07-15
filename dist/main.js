@@ -305,6 +305,40 @@ electron_1.ipcMain.handle('delete-temp-internet-files', async () => {
     const { stdout, stderr } = await execCommand(command);
     return `Temporary Internet Files Deleted:\n${stdout}${stderr ? `\nErrors: ${stderr}` : ''}`;
 });
+electron_1.ipcMain.handle('clean-temp-folders', async () => {
+    const folders = [
+        process.env.TEMP || 'C:\\Windows\\Temp',
+        process.env.TMP || 'C:\\Windows\\Temp',
+        path.join(process.env.LOCALAPPDATA || '', '..', 'Local', 'Temp'),
+        'C:\\Windows\\Prefetch',
+        'C:\\Windows\\Temp'
+    ];
+    // Remove duplicates
+    const uniqueFolders = Array.from(new Set(folders.filter(f => f && f.length > 0)));
+    let result = 'Cleaning Temporary Folders:\n\n';
+    let totalDeleted = 0;
+    let totalErrors = 0;
+    for (const folder of uniqueFolders) {
+        if (!folder || !fs.existsSync(folder)) {
+            result += `⊘ Skipped: ${folder} (not found)\n`;
+            continue;
+        }
+        try {
+            result += `→ Cleaning: ${folder}\n`;
+            const { stdout, stderr } = await execCommand(`powershell -Command "Get-ChildItem -Path '${folder}' -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; Write-Output 'Done'"`);
+            result += `  ✓ Cleaned successfully\n`;
+            totalDeleted++;
+        }
+        catch (e) {
+            result += `  ✗ Error: ${String(e).substring(0, 100)}\n`;
+            totalErrors++;
+        }
+    }
+    result += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    result += `Summary: ${totalDeleted} folders cleaned, ${totalErrors} errors\n`;
+    result += `✓ Temporary folders cleanup complete!\n`;
+    return result;
+});
 electron_1.ipcMain.handle('clear-windows-update-cache', async () => {
     const commands = [
         'net stop wuauserv',

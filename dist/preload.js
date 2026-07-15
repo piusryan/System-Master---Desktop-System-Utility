@@ -39,6 +39,7 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
     generateSecurityLogs: () => electron_1.ipcRenderer.invoke('generate-security-logs'),
     deleteRunHistory: () => electron_1.ipcRenderer.invoke('delete-run-history'),
     deleteTempInternetFiles: () => electron_1.ipcRenderer.invoke('delete-temp-internet-files'),
+    cleanTempFolders: () => electron_1.ipcRenderer.invoke('clean-temp-folders'),
     clearWindowsUpdateCache: () => electron_1.ipcRenderer.invoke('clear-windows-update-cache'),
     clearThumbnailCache: () => electron_1.ipcRenderer.invoke('clear-thumbnail-cache'),
     clearMicrosoftStoreCache: () => electron_1.ipcRenderer.invoke('clear-microsoft-store-cache'),

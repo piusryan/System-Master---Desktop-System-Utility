@@ -36,6 +36,7 @@ export interface ElectronAPI {
   generateSecurityLogs: () => Promise<string>
   deleteRunHistory: () => Promise<string>
   deleteTempInternetFiles: () => Promise<string>
+  cleanTempFolders: () => Promise<string>
   clearWindowsUpdateCache: () => Promise<string>
   clearThumbnailCache: () => Promise<string>
   clearMicrosoftStoreCache: () => Promise<string>

@@ -46,7 +46,7 @@ interface Category {
 const SystemRepairAndClean: React.FC = () => {
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({
     'category-0': true,
-    'category-1': false,
+    'category-1': true,
     'category-2': false,
     'category-3': false,
   });
@@ -180,6 +180,16 @@ const SystemRepairAndClean: React.FC = () => {
       title: 'System Cleanup',
       description: 'Free up space by removing temporary and unnecessary files',
       features: [
+        {
+          id: 'clean-temp-folders',
+          title: 'Clean All Temp Folders',
+          description: 'One-click cleanup of Temp, %Temp%, and Prefetch folders',
+          icon: <Trash2 className="w-6 h-6" />,
+          color: 'from-cyan-500 to-blue-600',
+          terminalColor: 'border-cyan-500/30 bg-cyan-950/40',
+          commandName: 'Clean Temp Folders',
+          runCommand: window.electronAPI.cleanTempFolders,
+        },
         {
           id: 'clear-recycle-bin',
           title: 'Empty Recycle Bin',
