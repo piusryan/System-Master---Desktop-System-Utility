@@ -65,6 +65,9 @@ export interface ElectronAPI {
   }>
   selectFileDialog: () => Promise<string | null>
   selectFolderDialog: () => Promise<string | null>
+  scanBrowserExtensions: () => Promise<Array<{ id: string; name: string; description?: string; version: string; permissions: string[]; isSideloaded: boolean; browser: 'chrome' | 'edge' | 'firefox'; path?: string; iconUrl?: string }>>
+  disableBrowserExtension: (id: string, browser: 'chrome' | 'edge' | 'firefox') => Promise<void>
+  removeBrowserExtension: (id: string, browser: 'chrome' | 'edge' | 'firefox') => Promise<void>
 }
 
 declare global {

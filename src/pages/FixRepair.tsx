@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react';
 import {
   HardDrive,
   Activity,
@@ -19,378 +19,500 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
-  X
-} from 'lucide-react'
+  X,
+  Square,
+} from 'lucide-react';
+import { useTaskManager } from '../contexts/TaskManagerContext';
 
-interface FeatureOutput {
-  id: string
-  output: string
-  isOpen: boolean
+interface Feature {
+  id: string;
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+  color: string;
+  terminalColor: string;
+  isDangerous?: boolean;
+  commandName: string;
+  runCommand: () => Promise<string>;
+}
+
+interface Category {
+  title: string;
+  description: string;
+  features: Feature[];
 }
 
 const FixRepair: React.FC = () => {
-  const [loadingStates, setLoadingStates] = useState<Record<string, boolean>>({})
-  const [progressPercentages, setProgressPercentages] = useState<Record<string, number>>({})
-  const [featureOutputs, setFeatureOutputs] = useState<Record<string, FeatureOutput>>({})
+  const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({
+    'category-0': true,
+    'category-1': false,
+    'category-2': false,
+    'category-3': false,
+    'category-4': false,
+  });
 
-  const simulateProgress = (id: string) => {
-    let progress = 0
+  const {
+    startTask,
+    updateTaskProgress,
+    updateTaskOutput,
+    stopTask,
+    toggleTaskOutput,
+    clearTaskOutput,
+    isTaskRunning,
+    getTaskProgress,
+    getTaskOutput,
+    isTaskOutputOpen,
+  } = useTaskManager();
+
+  const intervalRefs = useRef<Record<string, NodeJS.Timeout>>({});
+
+  const simulateProgress = (taskId: string) => {
+    let progress = 0;
     const interval = setInterval(() => {
-      progress += Math.floor(Math.random() * 6) + 1
+      progress += Math.floor(Math.random() * 6) + 1;
       if (progress >= 95) {
-        progress = 95
-        clearInterval(interval)
+        progress = 95;
       }
-      setProgressPercentages(prev => ({ ...prev, [id]: progress }))
-    }, 500)
-    return interval
-  }
+      updateTaskProgress(taskId, progress);
+    }, 500);
+    intervalRefs.current[taskId] = interval;
+    return interval;
+  };
 
-  const runCommand = async (id: string, commandName: string, action: () => Promise<string>) => {
-    setLoadingStates(prev => ({ ...prev, [id]: true }))
-    setProgressPercentages(prev => ({ ...prev, [id]: 0 }))
-    const progressInterval = simulateProgress(id)
-    
-    setFeatureOutputs(prev => ({
-      ...prev,
-      [id]: {
-        ...prev[id],
-        id,
-        output: `--- Running ${commandName} ---\n`,
-        isOpen: true
-      }
-    }))
+  const stopProgressSimulation = (taskId: string) => {
+    if (intervalRefs.current[taskId]) {
+      clearInterval(intervalRefs.current[taskId]);
+      delete intervalRefs.current[taskId];
+    }
+  };
+
+  const handleRunCommand = async (feature: Feature) => {
+    const taskId = feature.id;
+    if (isTaskRunning(taskId)) {
+      return;
+    }
+
+    startTask(taskId);
+    updateTaskOutput(taskId, `--- Running ${feature.commandName} ---\n`, false);
+
+    const progressInterval = simulateProgress(taskId);
+
     try {
-      const result = await action()
-      setFeatureOutputs(prev => ({
-        ...prev,
-        [id]: {
-          ...prev[id],
-          output: prev[id].output + result
-        }
-      }))
-    } catch (error) {
-      setFeatureOutputs(prev => ({
-        ...prev,
-        [id]: {
-          ...prev[id],
-          output: prev[id].output + `Error: ${error}`
-        }
-      }))
+      const result = await feature.runCommand();
+      updateTaskOutput(taskId, result);
+    } catch (error: any) {
+      updateTaskOutput(taskId, `Error: ${error.message || error}`);
     } finally {
-      clearInterval(progressInterval)
-      setProgressPercentages(prev => ({ ...prev, [id]: 100 }))
-      setLoadingStates(prev => ({ ...prev, [id]: false }))
+      clearInterval(progressInterval);
+      stopProgressSimulation(taskId);
+      updateTaskProgress(taskId, 100);
+      stopTask(taskId);
     }
-  }
+  };
 
-  const toggleOutput = (id: string) => {
-    setFeatureOutputs(prev => ({
+  const handleStopTask = (taskId: string) => {
+    stopProgressSimulation(taskId);
+    updateTaskOutput(taskId, '\n--- Task stopped by user ---\n');
+    updateTaskProgress(taskId, 100);
+    stopTask(taskId);
+  };
+
+  const toggleCategory = (categoryId: string) => {
+    setOpenCategories(prev => ({
       ...prev,
-      [id]: {
-        ...prev[id],
-        id,
-        output: prev[id]?.output || '',
-        isOpen: !prev[id]?.isOpen
-      }
-    }))
-  }
+      [categoryId]: !prev[categoryId],
+    }));
+  };
 
-  const copyOutput = async (id: string) => {
-    const output = featureOutputs[id]?.output
-    if (output) {
-      await navigator.clipboard.writeText(output)
-    }
-  }
+  const categories: Category[] = [
+    {
+      title: 'Hardware Diagnostics',
+      description: 'Test your hardware components for issues',
+      features: [
+        {
+          id: 'check-disk',
+          title: 'Check Disk',
+          description: 'Scan your hard drive for errors and fix them',
+          icon: <HardDrive className="w-6 h-6" />,
+          color: 'from-blue-500 to-cyan-500',
+          terminalColor: 'border-blue-500/30 bg-blue-950/40',
+          commandName: 'Check Disk',
+          runCommand: window.electronAPI.checkDisk,
+        },
+        {
+          id: 'windows-memory-diagnostic',
+          title: 'Memory Diagnostic',
+          description: 'Check your RAM for problems',
+          icon: <Activity className="w-6 h-6" />,
+          color: 'from-green-500 to-emerald-500',
+          terminalColor: 'border-green-500/30 bg-green-950/40',
+          commandName: 'Windows Memory Diagnostic',
+          runCommand: window.electronAPI.windowsMemoryDiagnostic,
+        },
+        {
+          id: 'directx-diagnostic',
+          title: 'DirectX Diagnostic',
+          description: 'Test your graphics and sound hardware',
+          icon: <Monitor className="w-6 h-6" />,
+          color: 'from-purple-500 to-pink-500',
+          terminalColor: 'border-purple-500/30 bg-purple-950/40',
+          commandName: 'DirectX Diagnostic Tool',
+          runCommand: window.electronAPI.directxDiagnostic,
+        },
+      ],
+    },
+    {
+      title: 'Quick Fixes',
+      description: 'One-click fixes for common problems',
+      features: [
+        {
+          id: 'fix-windows-apps',
+          title: 'Fix Windows Apps',
+          description: 'Repair apps that won\'t open or crash',
+          icon: <Smartphone className="w-6 h-6" />,
+          color: 'from-orange-500 to-red-500',
+          terminalColor: 'border-orange-500/30 bg-orange-950/40',
+          commandName: 'Fix Windows Apps',
+          runCommand: window.electronAPI.fixWindowsApps,
+        },
+        {
+          id: 'fix-bluetooth',
+          title: 'Fix Bluetooth',
+          description: 'Restart Bluetooth services to fix connection issues',
+          icon: <Bluetooth className="w-6 h-6" />,
+          color: 'from-cyan-500 to-blue-500',
+          terminalColor: 'border-cyan-500/30 bg-cyan-950/40',
+          commandName: 'Fix Bluetooth',
+          runCommand: window.electronAPI.fixBluetooth,
+        },
+        {
+          id: 'fix-audio',
+          title: 'Fix Audio',
+          description: 'Restart audio services when there\'s no sound',
+          icon: <Speaker className="w-6 h-6" />,
+          color: 'from-yellow-500 to-orange-500',
+          terminalColor: 'border-yellow-500/30 bg-yellow-950/40',
+          commandName: 'Fix Audio',
+          runCommand: window.electronAPI.fixAudio,
+        },
+      ],
+    },
+    {
+      title: 'Windows Troubleshooters',
+      description: 'Built-in Windows tools to automatically fix issues',
+      features: [
+        {
+          id: 'troubleshoot-bluetooth',
+          title: 'Bluetooth Troubleshooter',
+          description: 'Let Windows fix Bluetooth problems for you',
+          icon: <Bluetooth className="w-6 h-6" />,
+          color: 'from-indigo-500 to-purple-500',
+          terminalColor: 'border-indigo-500/30 bg-indigo-950/40',
+          commandName: 'Bluetooth Troubleshooter',
+          runCommand: window.electronAPI.troubleshootBluetooth,
+        },
+        {
+          id: 'troubleshoot-camera',
+          title: 'Camera Troubleshooter',
+          description: 'Fix webcam not working issues',
+          icon: <Camera className="w-6 h-6" />,
+          color: 'from-pink-500 to-red-500',
+          terminalColor: 'border-pink-500/30 bg-pink-950/40',
+          commandName: 'Camera Troubleshooter',
+          runCommand: window.electronAPI.troubleshootCamera,
+        },
+        {
+          id: 'troubleshoot-network',
+          title: 'Network Troubleshooter',
+          description: 'Fix Wi-Fi and internet connection issues',
+          icon: <Wifi className="w-6 h-6" />,
+          color: 'from-green-500 to-teal-500',
+          terminalColor: 'border-green-500/30 bg-green-950/40',
+          commandName: 'Network Troubleshooter',
+          runCommand: window.electronAPI.troubleshootNetwork,
+        },
+        {
+          id: 'troubleshoot-printer',
+          title: 'Printer Troubleshooter',
+          description: 'Fix printer not printing or connecting',
+          icon: <Printer className="w-6 h-6" />,
+          color: 'from-gray-500 to-gray-600',
+          terminalColor: 'border-gray-500/30 bg-gray-950/40',
+          commandName: 'Printer Troubleshooter',
+          runCommand: window.electronAPI.troubleshootPrinter,
+        },
+        {
+          id: 'troubleshoot-compatibility',
+          title: 'Compatibility Troubleshooter',
+          description: 'Make old apps work on new Windows',
+          icon: <Settings className="w-6 h-6" />,
+          color: 'from-orange-500 to-amber-500',
+          terminalColor: 'border-orange-500/30 bg-orange-950/40',
+          commandName: 'Program Compatibility Troubleshooter',
+          runCommand: window.electronAPI.troubleshootCompatibility,
+        },
+        {
+          id: 'troubleshoot-video-playback',
+          title: 'Video Playback Troubleshooter',
+          description: 'Fix videos that won\'t play or are choppy',
+          icon: <Video className="w-6 h-6" />,
+          color: 'from-purple-500 to-violet-500',
+          terminalColor: 'border-purple-500/30 bg-purple-950/40',
+          commandName: 'Video Playback Troubleshooter',
+          runCommand: window.electronAPI.troubleshootVideoPlayback,
+        },
+        {
+          id: 'troubleshoot-windows-media-player',
+          title: 'Media Player Troubleshooter',
+          description: 'Fix Windows Media Player issues',
+          icon: <Disc className="w-6 h-6" />,
+          color: 'from-blue-500 to-indigo-500',
+          terminalColor: 'border-blue-500/30 bg-blue-950/40',
+          commandName: 'Windows Media Player Troubleshooter',
+          runCommand: window.electronAPI.troubleshootWindowsMediaPlayer,
+        },
+        {
+          id: 'troubleshoot-windows-update',
+          title: 'Windows Update Troubleshooter',
+          description: 'Fix updates that won\'t install',
+          icon: <RefreshCw className="w-6 h-6" />,
+          color: 'from-green-500 to-cyan-500',
+          terminalColor: 'border-green-500/30 bg-green-950/40',
+          commandName: 'Windows Update Troubleshooter',
+          runCommand: window.electronAPI.troubleshootWindowsUpdate,
+        },
+      ],
+    },
+    {
+      title: 'System Protection',
+      description: 'Advanced recovery and protection features',
+      features: [
+        {
+          id: 'enable-quick-recovery',
+          title: 'Enable Quick Recovery',
+          description: 'Help your PC boot faster after failures',
+          icon: <Shield className="w-6 h-6" />,
+          color: 'from-emerald-500 to-green-600',
+          terminalColor: 'border-emerald-500/30 bg-emerald-950/40',
+          commandName: 'Enable Quick Machine Recovery',
+          runCommand: window.electronAPI.enableQuickRecovery,
+        },
+        {
+          id: 'disable-quick-recovery',
+          title: 'Disable Quick Recovery',
+          description: 'Turn off quick recovery mode',
+          icon: <Shield className="w-6 h-6" />,
+          color: 'from-red-500 to-rose-600',
+          terminalColor: 'border-red-500/30 bg-red-950/40',
+          isDangerous: true,
+          commandName: 'Disable Quick Machine Recovery',
+          runCommand: window.electronAPI.disableQuickRecovery,
+        },
+        {
+          id: 'activate-self-healing',
+          title: 'Activate Self-Healing',
+          description: 'Let Windows automatically fix file system issues',
+          icon: <Shield className="w-6 h-6" />,
+          color: 'from-purple-500 to-pink-600',
+          terminalColor: 'border-purple-500/30 bg-purple-950/40',
+          commandName: 'Activate Self-Healing Mode',
+          runCommand: window.electronAPI.activateSelfHealing,
+        },
+      ],
+    },
+    {
+      title: 'Generate Logs',
+      description: 'Collect system logs for troubleshooting',
+      features: [
+        {
+          id: 'generate-system-logs',
+          title: 'System Logs',
+          description: 'Save recent system event logs',
+          icon: <FileText className="w-6 h-6" />,
+          color: 'from-blue-500 to-cyan-600',
+          terminalColor: 'border-blue-500/30 bg-blue-950/40',
+          commandName: 'Generate System Logs',
+          runCommand: window.electronAPI.generateSystemLogs,
+        },
+        {
+          id: 'generate-application-logs',
+          title: 'Application Logs',
+          description: 'Save recent app crash and error logs',
+          icon: <FileText className="w-6 h-6" />,
+          color: 'from-orange-500 to-red-600',
+          terminalColor: 'border-orange-500/30 bg-orange-950/40',
+          commandName: 'Generate Application Logs',
+          runCommand: window.electronAPI.generateApplicationLogs,
+        },
+        {
+          id: 'generate-security-logs',
+          title: 'Security Logs',
+          description: 'Save security-related event logs',
+          icon: <ShieldCheck className="w-6 h-6" />,
+          color: 'from-red-500 to-rose-600',
+          terminalColor: 'border-red-500/30 bg-red-950/40',
+          commandName: 'Generate Security Logs',
+          runCommand: window.electronAPI.generateSecurityLogs,
+        },
+      ],
+    },
+  ];
 
-  const clearOutput = (id: string) => {
-    setFeatureOutputs(prev => ({
-      ...prev,
-      [id]: {
-        ...prev[id],
-        output: ''
-      }
-    }))
-  }
+  useEffect(() => {
+    return () => {
+      Object.values(intervalRefs.current).forEach(clearInterval);
+    };
+  }, []);
 
-  const features = [
-    {
-      id: 'check-disk',
-      title: 'Check Disk',
-      description: 'Scan and fix disk errors',
-      icon: <HardDrive className="w-6 h-6" />,
-      color: 'from-blue-500 to-cyan-500',
-      terminalColor: 'border-blue-500/30 bg-blue-950/40',
-      action: () => runCommand('check-disk', 'Check Disk', window.electronAPI.checkDisk)
-    },
-    {
-      id: 'windows-memory-diagnostic',
-      title: 'Windows Memory Diagnostic',
-      description: 'Check for memory problems',
-      icon: <Activity className="w-6 h-6" />,
-      color: 'from-green-500 to-emerald-500',
-      terminalColor: 'border-green-500/30 bg-green-950/40',
-      action: () => runCommand('windows-memory-diagnostic', 'Windows Memory Diagnostic', window.electronAPI.windowsMemoryDiagnostic)
-    },
-    {
-      id: 'directx-diagnostic',
-      title: 'DirectX Diagnostic Tool',
-      description: 'Test DirectX functionality',
-      icon: <Monitor className="w-6 h-6" />,
-      color: 'from-purple-500 to-pink-500',
-      terminalColor: 'border-purple-500/30 bg-purple-950/40',
-      action: () => runCommand('directx-diagnostic', 'DirectX Diagnostic Tool', window.electronAPI.directxDiagnostic)
-    },
-    {
-      id: 'fix-windows-apps',
-      title: 'Fix Windows Apps',
-      description: 'Re-register and repair Windows apps',
-      icon: <Smartphone className="w-6 h-6" />,
-      color: 'from-orange-500 to-red-500',
-      terminalColor: 'border-orange-500/30 bg-orange-950/40',
-      action: () => runCommand('fix-windows-apps', 'Fix Windows Apps', window.electronAPI.fixWindowsApps)
-    },
-    {
-      id: 'fix-bluetooth',
-      title: 'Fix Bluetooth Issues',
-      description: 'Restart Bluetooth services',
-      icon: <Bluetooth className="w-6 h-6" />,
-      color: 'from-cyan-500 to-blue-500',
-      terminalColor: 'border-cyan-500/30 bg-cyan-950/40',
-      action: () => runCommand('fix-bluetooth', 'Fix Bluetooth Issues', window.electronAPI.fixBluetooth)
-    },
-    {
-      id: 'fix-audio',
-      title: 'Fix Audio & Sound Issues',
-      description: 'Restart audio services',
-      icon: <Speaker className="w-6 h-6" />,
-      color: 'from-yellow-500 to-orange-500',
-      terminalColor: 'border-yellow-500/30 bg-yellow-950/40',
-      action: () => runCommand('fix-audio', 'Fix Audio & Sound Issues', window.electronAPI.fixAudio)
-    },
-    {
-      id: 'troubleshoot-bluetooth',
-      title: 'Bluetooth Troubleshooter',
-      description: 'Run Windows Bluetooth troubleshooter',
-      icon: <Bluetooth className="w-6 h-6" />,
-      color: 'from-indigo-500 to-purple-500',
-      terminalColor: 'border-indigo-500/30 bg-indigo-950/40',
-      action: () => runCommand('troubleshoot-bluetooth', 'Bluetooth Troubleshooter', window.electronAPI.troubleshootBluetooth)
-    },
-    {
-      id: 'troubleshoot-camera',
-      title: 'Camera Troubleshooter',
-      description: 'Run Windows Camera troubleshooter',
-      icon: <Camera className="w-6 h-6" />,
-      color: 'from-pink-500 to-red-500',
-      terminalColor: 'border-pink-500/30 bg-pink-950/40',
-      action: () => runCommand('troubleshoot-camera', 'Camera Troubleshooter', window.electronAPI.troubleshootCamera)
-    },
-    {
-      id: 'troubleshoot-network',
-      title: 'Network & Internet Troubleshooter',
-      description: 'Run Windows Network troubleshooter',
-      icon: <Wifi className="w-6 h-6" />,
-      color: 'from-green-500 to-teal-500',
-      terminalColor: 'border-green-500/30 bg-green-950/40',
-      action: () => runCommand('troubleshoot-network', 'Network Troubleshooter', window.electronAPI.troubleshootNetwork)
-    },
-    {
-      id: 'troubleshoot-printer',
-      title: 'Printer Troubleshooter',
-      description: 'Run Windows Printer troubleshooter',
-      icon: <Printer className="w-6 h-6" />,
-      color: 'from-gray-500 to-gray-600',
-      terminalColor: 'border-gray-500/30 bg-gray-950/40',
-      action: () => runCommand('troubleshoot-printer', 'Printer Troubleshooter', window.electronAPI.troubleshootPrinter)
-    },
-    {
-      id: 'troubleshoot-compatibility',
-      title: 'Program Compatibility Troubleshooter',
-      description: 'Run Windows Program Compatibility troubleshooter',
-      icon: <Settings className="w-6 h-6" />,
-      color: 'from-orange-500 to-amber-500',
-      terminalColor: 'border-orange-500/30 bg-orange-950/40',
-      action: () => runCommand('troubleshoot-compatibility', 'Compatibility Troubleshooter', window.electronAPI.troubleshootCompatibility)
-    },
-    {
-      id: 'troubleshoot-video-playback',
-      title: 'Video Playback Troubleshooter',
-      description: 'Run Windows Video Playback troubleshooter',
-      icon: <Video className="w-6 h-6" />,
-      color: 'from-purple-500 to-violet-500',
-      terminalColor: 'border-purple-500/30 bg-purple-950/40',
-      action: () => runCommand('troubleshoot-video-playback', 'Video Playback Troubleshooter', window.electronAPI.troubleshootVideoPlayback)
-    },
-    {
-      id: 'troubleshoot-windows-media-player',
-      title: 'Windows Media Player Troubleshooter',
-      description: 'Run Windows Media Player troubleshooter',
-      icon: <Disc className="w-6 h-6" />,
-      color: 'from-blue-500 to-indigo-500',
-      terminalColor: 'border-blue-500/30 bg-blue-950/40',
-      action: () => runCommand('troubleshoot-windows-media-player', 'WMP Troubleshooter', window.electronAPI.troubleshootWindowsMediaPlayer)
-    },
-    {
-      id: 'troubleshoot-windows-update',
-      title: 'Windows Update Troubleshooter',
-      description: 'Run Windows Update troubleshooter',
-      icon: <RefreshCw className="w-6 h-6" />,
-      color: 'from-green-500 to-cyan-500',
-      terminalColor: 'border-green-500/30 bg-green-950/40',
-      action: () => runCommand('troubleshoot-windows-update', 'Windows Update Troubleshooter', window.electronAPI.troubleshootWindowsUpdate)
-    },
-    {
-      id: 'enable-quick-recovery',
-      title: 'Enable Quick Machine Recovery',
-      description: 'Enable boot status policy to ignore failures',
-      icon: <Shield className="w-6 h-6" />,
-      color: 'from-emerald-500 to-green-600',
-      terminalColor: 'border-emerald-500/30 bg-emerald-950/40',
-      action: () => runCommand('enable-quick-recovery', 'Enable Quick Recovery', window.electronAPI.enableQuickRecovery)
-    },
-    {
-      id: 'disable-quick-recovery',
-      title: 'Disable Quick Machine Recovery',
-      description: 'Disable quick recovery mode',
-      icon: <Shield className="w-6 h-6" />,
-      color: 'from-red-500 to-rose-600',
-      terminalColor: 'border-red-500/30 bg-red-950/40',
-      action: () => runCommand('disable-quick-recovery', 'Disable Quick Recovery', window.electronAPI.disableQuickRecovery)
-    },
-    {
-      id: 'activate-self-healing',
-      title: 'Activate Self-Healing Mode',
-      description: 'Enable NTFS self-healing',
-      icon: <Shield className="w-6 h-6" />,
-      color: 'from-purple-500 to-pink-600',
-      terminalColor: 'border-purple-500/30 bg-purple-950/40',
-      action: () => runCommand('activate-self-healing', 'Activate Self-Healing', window.electronAPI.activateSelfHealing)
-    },
-    {
-      id: 'generate-system-logs',
-      title: 'Generate System Logs',
-      description: 'Collect and save recent system event logs',
-      icon: <FileText className="w-6 h-6" />,
-      color: 'from-blue-500 to-cyan-600',
-      terminalColor: 'border-blue-500/30 bg-blue-950/40',
-      action: () => runCommand('generate-system-logs', 'Generate System Logs', window.electronAPI.generateSystemLogs)
-    },
-    {
-      id: 'generate-application-logs',
-      title: 'Generate Application Logs',
-      description: 'Collect and save recent application event logs',
-      icon: <FileText className="w-6 h-6" />,
-      color: 'from-orange-500 to-red-600',
-      terminalColor: 'border-orange-500/30 bg-orange-950/40',
-      action: () => runCommand('generate-application-logs', 'Generate Application Logs', window.electronAPI.generateApplicationLogs)
-    },
-    {
-      id: 'generate-security-logs',
-      title: 'Generate Security Logs',
-      description: 'Collect and save recent security event logs',
-      icon: <ShieldCheck className="w-6 h-6" />,
-      color: 'from-red-500 to-rose-600',
-      terminalColor: 'border-red-500/30 bg-red-950/40',
-      action: () => runCommand('generate-security-logs', 'Generate Security Logs', window.electronAPI.generateSecurityLogs)
-    }
-  ]
+  const renderFeatureCard = (feature: Feature) => {
+    const taskId = feature.id;
+    const isRunning = isTaskRunning(taskId);
+    const progress = getTaskProgress(taskId);
+    const output = getTaskOutput(taskId);
+    const outputOpen = isTaskOutputOpen(taskId);
+
+    return (
+      <div
+        key={taskId}
+        className={`glass rounded-2xl overflow-hidden border-2 transition-all duration-300 ${
+          feature.isDangerous
+            ? 'border-red-500/30 hover:border-red-500/50'
+            : 'border-transparent hover:border-primary-500/50'
+        }`}
+      >
+        <div className="p-6">
+          <div className="flex items-start gap-4">
+            <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${feature.color} flex items-center justify-center shrink-0`}>
+              {feature.icon}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className={`text-base font-semibold ${feature.isDangerous ? 'text-red-300' : 'text-white'}`}>
+                {feature.title}
+              </h3>
+              <p className="text-gray-400 text-xs mt-1 line-clamp-2">{feature.description}</p>
+              <div className="flex items-center gap-2 mt-3">
+                {isRunning ? (
+                  <button
+                    onClick={() => handleStopTask(taskId)}
+                    className="flex-1 px-3 py-2 rounded-lg text-xs font-medium bg-red-500/20 hover:bg-red-500/30 text-red-300 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Square className="w-3 h-3 fill-current" />
+                    Stop
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleRunCommand(feature)}
+                    className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                      feature.isDangerous
+                        ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
+                        : 'bg-primary-500/20 text-primary-300 hover:bg-primary-500/30'
+                    }`}
+                  >
+                    Run
+                  </button>
+                )}
+                {output && (
+                  <button
+                    onClick={() => toggleTaskOutput(taskId)}
+                    className="p-2 bg-dark-700 rounded-lg hover:bg-dark-600 transition-colors"
+                  >
+                    {outputOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+                )}
+              </div>
+              {isRunning && (
+                <div className="mt-2">
+                  <div className="flex justify-between text-xs text-gray-400 mb-1">
+                    <span>Progress</span>
+                    <span>{progress}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-dark-700 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-200 ${
+                        feature.isDangerous ? 'bg-red-500' : 'bg-gradient-to-r from-primary-500 to-accent-500'
+                      }`}
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        {output && outputOpen && (
+          <div className={`border-t ${feature.terminalColor} p-3`}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
+                <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                <span className="ml-2 text-[10px] text-gray-400 font-mono">output</span>
+              </div>
+              <div className="flex gap-0.5">
+                <button
+                  onClick={() => navigator.clipboard.writeText(output)}
+                  className="p-1 hover:bg-dark-700 rounded transition-colors"
+                  title="Copy"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => clearTaskOutput(taskId)}
+                  className="p-1 hover:bg-dark-700 rounded transition-colors"
+                  title="Clear"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+            <pre className="bg-dark-950/50 rounded-lg p-2.5 text-xs text-gray-200 overflow-auto max-h-48 whitespace-pre-wrap font-mono">
+              {output}
+            </pre>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-white">Fix & Repair</h2>
-        <p className="text-gray-400 mt-1">Tools to diagnose and fix common Windows issues</p>
+        <p className="text-gray-400 mt-1">Diagnose and fix common Windows problems</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {features.map(feature => (
-          <div
-            key={feature.id}
-            className="glass rounded-2xl overflow-hidden border-2 border-transparent hover:border-primary-500/50 transition-all duration-300"
-          >
-            <div className="p-6">
-              <div className="flex items-start gap-4">
-                <div className={`w-14 h-14 rounded-xl bg-gradient-to-br ${feature.color} flex items-center justify-center shrink-0`}>
-                  {feature.icon}
+      <div className="space-y-4">
+        {categories.map((category, index) => {
+          const categoryId = `category-${index}`;
+          return (
+            <div key={categoryId} className="glass rounded-2xl overflow-hidden border border-dark-600">
+              <button
+                onClick={() => toggleCategory(categoryId)}
+                className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-dark-750/50 transition-colors"
+              >
+                <div>
+                  <h3 className="text-lg font-semibold text-white">{category.title}</h3>
+                  <p className="text-gray-400 text-sm mt-0.5">{category.description}</p>
                 </div>
-                <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-white">{feature.title}</h3>
-                  <p className="text-gray-400 text-sm mt-1">{feature.description}</p>
-                  <div className="flex items-center gap-2 mt-4">
-                    <button
-                      onClick={feature.action}
-                      disabled={loadingStates[feature.id]}
-                      className="flex-1 px-4 py-2 bg-primary-500/20 text-primary-300 hover:bg-primary-500/30 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-all"
-                    >
-                      {loadingStates[feature.id] ? `Running... ${progressPercentages[feature.id] || 0}%` : 'Run'}
-                    </button>
-                    {featureOutputs[feature.id]?.output && (
-                      <button
-                        onClick={() => toggleOutput(feature.id)}
-                        className="p-2 bg-dark-700 rounded-lg hover:bg-dark-600 transition-colors"
-                      >
-                        {featureOutputs[feature.id].isOpen ? (
-                          <ChevronUp className="w-5 h-5" />
-                        ) : (
-                          <ChevronDown className="w-5 h-5" />
-                        )}
-                      </button>
-                    )}
+                {openCategories[categoryId] ? (
+                  <ChevronUp className="w-5 h-5 text-gray-400" />
+                ) : (
+                  <ChevronDown className="w-5 h-5 text-gray-400" />
+                )}
+              </button>
+              {openCategories[categoryId] && (
+                <div className="border-t border-dark-600 p-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {category.features.map(renderFeatureCard)}
                   </div>
-                  {loadingStates[feature.id] && (
-                    <div className="mt-3">
-                      <div className="flex justify-between text-xs text-gray-400 mb-1">
-                        <span>Progress</span>
-                        <span>{progressPercentages[feature.id] || 0}%</span>
-                      </div>
-                      <div className="w-full h-2 bg-dark-700 rounded-full overflow-hidden">
-                        <div
-                          className="h-full transition-all duration-200 bg-gradient-to-r from-primary-500 to-accent-500"
-                          style={{ width: `${progressPercentages[feature.id] || 0}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
                 </div>
-              </div>
+              )}
             </div>
-            {featureOutputs[feature.id]?.output && featureOutputs[feature.id].isOpen && (
-              <div className={`border-t ${feature.terminalColor} p-4`}>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-red-500" />
-                    <div className="w-3 h-3 rounded-full bg-yellow-500" />
-                    <div className="w-3 h-3 rounded-full bg-green-500" />
-                    <span className="ml-2 text-xs text-gray-400 font-mono">cmd.exe</span>
-                  </div>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => copyOutput(feature.id)}
-                      className="p-1 hover:bg-dark-700 rounded transition-colors"
-                      title="Copy output"
-                    >
-                      <Copy className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => clearOutput(feature.id)}
-                      className="p-1 hover:bg-dark-700 rounded transition-colors"
-                      title="Clear output"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-                <pre className="bg-dark-950/50 rounded-lg p-3 text-sm text-gray-200 overflow-auto max-h-64 whitespace-pre-wrap font-mono">
-                  {featureOutputs[feature.id].output}
-                </pre>
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default FixRepair
+export default FixRepair;

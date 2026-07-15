@@ -85,7 +85,3 @@ npm run build:win
   ```bash
   npx electron .
   ```
-
-
-
-# node version 20.19.6

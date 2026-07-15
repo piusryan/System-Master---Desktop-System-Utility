@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Shield,
   RefreshCw,
@@ -19,451 +19,483 @@ import {
   Eraser,
   LayoutGrid,
   History,
-  MapPin
-} from 'lucide-react'
+  MapPin,
+  Square,
+} from 'lucide-react';
+import { useTaskManager } from '../contexts/TaskManagerContext';
 
-interface FeatureOutput {
-  id: string
-  output: string
-  isOpen: boolean
+interface Feature {
+  id: string;
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+  color: string;
+  terminalColor: string;
+  isDangerous?: boolean;
+  commandName: string;
+  runCommand: () => Promise<string>;
+}
+
+interface Category {
+  title: string;
+  description: string;
+  features: Feature[];
+  defaultOpen?: boolean;
 }
 
 const SystemRepairAndClean: React.FC = () => {
-  const [loadingStates, setLoadingStates] = useState<Record<string, boolean>>({})
-  const [progressPercentages, setProgressPercentages] = useState<Record<string, number>>({})
-  const [featureOutputs, setFeatureOutputs] = useState<Record<string, FeatureOutput>>({})
+  const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({
+    'category-0': true,
+    'category-1': false,
+    'category-2': false,
+    'category-3': false,
+  });
 
-  const simulateProgress = (id: string) => {
-    let progress = 0
+  const {
+    startTask,
+    updateTaskProgress,
+    updateTaskOutput,
+    stopTask,
+    toggleTaskOutput,
+    clearTaskOutput,
+    isTaskRunning,
+    getTaskProgress,
+    getTaskOutput,
+    isTaskOutputOpen,
+  } = useTaskManager();
+
+  const intervalRefs = useRef<Record<string, NodeJS.Timeout>>({});
+
+  const simulateProgress = (taskId: string) => {
+    let progress = 0;
     const interval = setInterval(() => {
       if (progress < 90) {
-        progress += Math.floor(Math.random() * 6) + 1 // Faster at the start
+        progress += Math.floor(Math.random() * 6) + 1;
       } else if (progress < 100) {
-        // Slow down once we hit 90%, just tick 1% at a time to show activity
-        progress += 1
+        progress += 1;
       }
-      // Don't let it go over 99% until the command actually finishes
       if (progress >= 99) {
-        progress = 99
+        progress = 99;
       }
-      setProgressPercentages(prev => ({ ...prev, [id]: progress }))
-    }, 500) // Update every 500ms
-    return interval
-  }
+      updateTaskProgress(taskId, progress);
+    }, 500);
+    intervalRefs.current[taskId] = interval;
+    return interval;
+  };
 
-  const runCommand = async (id: string, commandName: string) => {
-    setLoadingStates(prev => ({ ...prev, [id]: true }))
-    setProgressPercentages(prev => ({ ...prev, [id]: 0 }))
-    const progressInterval = simulateProgress(id)
-    
-    setFeatureOutputs(prev => ({
-      ...prev,
-      [id]: {
-        ...prev[id],
-        id,
-        output: `--- Running ${commandName} --- \n`,
-        isOpen: true
-      }
-    }))
+  const stopProgressSimulation = (taskId: string) => {
+    if (intervalRefs.current[taskId]) {
+      clearInterval(intervalRefs.current[taskId]);
+      delete intervalRefs.current[taskId];
+    }
+  };
+
+  const handleRunCommand = async (feature: Feature) => {
+    const taskId = feature.id;
+    if (isTaskRunning(taskId)) {
+      return;
+    }
+
+    startTask(taskId);
+    updateTaskOutput(taskId, `--- Running ${feature.commandName} ---\n`, false);
+
+    const progressInterval = simulateProgress(taskId);
+
     try {
-      let result: string
-      switch (commandName) {
-        case 'sfcScan':
-          result = await window.electronAPI.sfcScan()
-          break
-        case 'dismCheckHealth':
-          result = await window.electronAPI.dismCheckHealth()
-          break
-        case 'dismScanHealth':
-          result = await window.electronAPI.dismScanHealth()
-          break
-        case 'dismRestoreHealth':
-          result = await window.electronAPI.dismRestoreHealth()
-          break
-        case 'deleteRunHistory':
-          result = await window.electronAPI.deleteRunHistory()
-          break
-        case 'deleteTempInternetFiles':
-          result = await window.electronAPI.deleteTempInternetFiles()
-          break
-        case 'clearWindowsUpdateCache':
-          result = await window.electronAPI.clearWindowsUpdateCache()
-          break
-        case 'clearThumbnailCache':
-          result = await window.electronAPI.clearThumbnailCache()
-          break
-        case 'clearMicrosoftStoreCache':
-          result = await window.electronAPI.clearMicrosoftStoreCache()
-          break
-        case 'clearOutlookCache':
-          result = await window.electronAPI.clearOutlookCache()
-          break
-        case 'clearTeamsCache':
-          result = await window.electronAPI.clearTeamsCache()
-          break
-        case 'clearRecycleBin':
-          result = await window.electronAPI.clearRecycleBin()
-          break
-        case 'deleteOldWindows':
-          result = await window.electronAPI.deleteOldWindows()
-          break
-        case 'defragmentDrive':
-          result = await window.electronAPI.defragmentDrive()
-          break
-        case 'wipeFreeSpace':
-          result = await window.electronAPI.wipeFreeSpace()
-          break
-        case 'manageDiskPartitions':
-          result = await window.electronAPI.manageDiskPartitions()
-          break
-        case 'deleteRecentItems':
-          result = await window.electronAPI.deleteRecentItems()
-          break
-        case 'deleteAddressBarHistory':
-          result = await window.electronAPI.deleteAddressBarHistory()
-          break
-        default:
-          result = 'Unknown command'
-      }
-      setFeatureOutputs(prev => ({
-        ...prev,
-        [id]: {
-          ...prev[id],
-          output: prev[id].output + result
-        }
-      }))
-    } catch (error) {
-      setFeatureOutputs(prev => ({
-        ...prev,
-        [id]: {
-          ...prev[id],
-          output: prev[id].output + `Error: ${error}`
-        }
-      }))
+      const result = await feature.runCommand();
+      updateTaskOutput(taskId, result);
+    } catch (error: any) {
+      updateTaskOutput(taskId, `Error: ${error.message || error}`);
     } finally {
-      clearInterval(progressInterval)
-      setProgressPercentages(prev => ({ ...prev, [id]: 100 }))
-      setLoadingStates(prev => ({ ...prev, [id]: false }))
+      clearInterval(progressInterval);
+      stopProgressSimulation(taskId);
+      updateTaskProgress(taskId, 100);
+      stopTask(taskId);
     }
-  }
+  };
 
-  const toggleOutput = (id: string) => {
-    setFeatureOutputs(prev => ({
+  const handleStopTask = (taskId: string) => {
+    stopProgressSimulation(taskId);
+    updateTaskOutput(taskId, '\n--- Task stopped by user ---\n');
+    updateTaskProgress(taskId, 100);
+    stopTask(taskId);
+  };
+
+  const toggleCategory = (categoryId: string) => {
+    setOpenCategories(prev => ({
       ...prev,
-      [id]: {
-        ...prev[id],
-        id,
-        output: prev[id]?.output || '',
-        isOpen: !prev[id]?.isOpen
-      }
-    }))
-  }
+      [categoryId]: !prev[categoryId],
+    }));
+  };
 
-  const copyOutput = async (id: string) => {
-    const output = featureOutputs[id]?.output
-    if (output) {
-      await navigator.clipboard.writeText(output)
-    }
-  }
+  const categories: Category[] = [
+    {
+      title: 'System Repair',
+      description: 'Fix corrupted system files and restore Windows health',
+      defaultOpen: true,
+      features: [
+        {
+          id: 'sfc-scan',
+          title: 'SFC Scan',
+          description: 'Scan for and repair corrupted system files',
+          icon: <Shield className="w-6 h-6" />,
+          color: 'from-blue-500 to-cyan-500',
+          terminalColor: 'border-blue-500/30 bg-blue-950/40',
+          commandName: 'SFC Scan',
+          runCommand: window.electronAPI.sfcScan,
+        },
+        {
+          id: 'dism-check-health',
+          title: 'Check System Health',
+          description: 'Quick check if your system has any issues',
+          icon: <Activity className="w-6 h-6" />,
+          color: 'from-green-500 to-emerald-500',
+          terminalColor: 'border-green-500/30 bg-green-950/40',
+          commandName: 'DISM Check Health',
+          runCommand: window.electronAPI.dismCheckHealth,
+        },
+        {
+          id: 'dism-scan-health',
+          title: 'Deep System Scan',
+          description: 'Thorough scan for system corruption (takes longer)',
+          icon: <RefreshCw className="w-6 h-6" />,
+          color: 'from-yellow-500 to-orange-500',
+          terminalColor: 'border-yellow-500/30 bg-yellow-950/40',
+          commandName: 'DISM Scan Health',
+          runCommand: window.electronAPI.dismScanHealth,
+        },
+        {
+          id: 'dism-restore-health',
+          title: 'Repair System',
+          description: 'Fix system corruption using Windows Update',
+          icon: <Wrench className="w-6 h-6" />,
+          color: 'from-purple-500 to-pink-500',
+          terminalColor: 'border-purple-500/30 bg-purple-950/40',
+          commandName: 'DISM Restore Health',
+          runCommand: window.electronAPI.dismRestoreHealth,
+        },
+      ],
+    },
+    {
+      title: 'System Cleanup',
+      description: 'Free up space by removing temporary and unnecessary files',
+      features: [
+        {
+          id: 'clear-recycle-bin',
+          title: 'Empty Recycle Bin',
+          description: 'Permanently delete all files in Recycle Bin',
+          icon: <Trash2 className="w-6 h-6" />,
+          color: 'from-red-500 to-rose-600',
+          terminalColor: 'border-red-500/30 bg-red-950/40',
+          isDangerous: true,
+          commandName: 'Clear Recycle Bin',
+          runCommand: window.electronAPI.clearRecycleBin,
+        },
+        {
+          id: 'delete-temp-internet-files',
+          title: 'Delete Temporary Internet Files',
+          description: 'Clear old internet files from Edge and IE',
+          icon: <FileText className="w-6 h-6" />,
+          color: 'from-cyan-500 to-blue-500',
+          terminalColor: 'border-cyan-500/30 bg-cyan-950/40',
+          commandName: 'Delete Temp Internet Files',
+          runCommand: window.electronAPI.deleteTempInternetFiles,
+        },
+        {
+          id: 'clear-windows-update-cache',
+          title: 'Clear Windows Update Cache',
+          description: 'Delete old update files that are no longer needed',
+          icon: <Database className="w-6 h-6" />,
+          color: 'from-green-500 to-teal-500',
+          terminalColor: 'border-green-500/30 bg-green-950/40',
+          commandName: 'Clear Windows Update Cache',
+          runCommand: window.electronAPI.clearWindowsUpdateCache,
+        },
+        {
+          id: 'clear-thumbnail-cache',
+          title: 'Clear Thumbnail Cache',
+          description: 'Refresh file and folder preview images',
+          icon: <Image className="w-6 h-6" />,
+          color: 'from-purple-500 to-indigo-500',
+          terminalColor: 'border-purple-500/30 bg-purple-950/40',
+          commandName: 'Clear Thumbnail Cache',
+          runCommand: window.electronAPI.clearThumbnailCache,
+        },
+        {
+          id: 'delete-old-windows',
+          title: 'Delete Old Windows Installation',
+          description: 'Remove the Windows.old folder (previous version)',
+          icon: <HardDrive className="w-6 h-6" />,
+          color: 'from-amber-500 to-red-600',
+          terminalColor: 'border-amber-500/30 bg-amber-950/40',
+          isDangerous: true,
+          commandName: 'Delete Old Windows',
+          runCommand: window.electronAPI.deleteOldWindows,
+        },
+        {
+          id: 'delete-recent-items',
+          title: 'Clear Recent Items History',
+          description: 'Remove recent files list from File Explorer',
+          icon: <History className="w-6 h-6" />,
+          color: 'from-slate-500 to-gray-600',
+          terminalColor: 'border-slate-500/30 bg-slate-950/40',
+          commandName: 'Delete Recent Items',
+          runCommand: window.electronAPI.deleteRecentItems,
+        },
+        {
+          id: 'delete-run-history',
+          title: 'Clear Run Command History',
+          description: 'Remove history from the Run dialog',
+          icon: <History className="w-6 h-6" />,
+          color: 'from-orange-500 to-red-500',
+          terminalColor: 'border-orange-500/30 bg-orange-950/40',
+          commandName: 'Delete Run History',
+          runCommand: window.electronAPI.deleteRunHistory,
+        },
+        {
+          id: 'delete-address-bar-history',
+          title: 'Clear Address Bar History',
+          description: 'Remove typed paths from File Explorer',
+          icon: <MapPin className="w-6 h-6" />,
+          color: 'from-sky-500 to-blue-600',
+          terminalColor: 'border-sky-500/30 bg-sky-950/40',
+          commandName: 'Delete Address Bar History',
+          runCommand: window.electronAPI.deleteAddressBarHistory,
+        },
+      ],
+    },
+    {
+      title: 'App Cache Cleanup',
+      description: 'Clear cache for common apps to fix issues and free space',
+      features: [
+        {
+          id: 'clear-microsoft-store-cache',
+          title: 'Microsoft Store Cache',
+          description: 'Fix Store download and update issues',
+          icon: <Store className="w-6 h-6" />,
+          color: 'from-blue-600 to-indigo-600',
+          terminalColor: 'border-blue-600/30 bg-blue-950/40',
+          commandName: 'Clear Microsoft Store Cache',
+          runCommand: window.electronAPI.clearMicrosoftStoreCache,
+        },
+        {
+          id: 'clear-outlook-cache',
+          title: 'Outlook Cache',
+          description: 'Fix email sync issues in Outlook',
+          icon: <Mail className="w-6 h-6" />,
+          color: 'from-blue-500 to-purple-500',
+          terminalColor: 'border-blue-500/30 bg-blue-950/40',
+          commandName: 'Clear Outlook Cache',
+          runCommand: window.electronAPI.clearOutlookCache,
+        },
+        {
+          id: 'clear-teams-cache',
+          title: 'Microsoft Teams Cache',
+          description: 'Fix Teams performance and loading issues',
+          icon: <MessageSquare className="w-6 h-6" />,
+          color: 'from-purple-600 to-pink-600',
+          terminalColor: 'border-purple-600/30 bg-purple-950/40',
+          commandName: 'Clear Teams Cache',
+          runCommand: window.electronAPI.clearTeamsCache,
+        },
+      ],
+    },
+    {
+      title: 'Disk Tools',
+      description: 'Manage and optimize your hard drives',
+      features: [
+        {
+          id: 'defragment-drive',
+          title: 'Defragment Drive',
+          description: 'Optimize your hard drive for better performance',
+          icon: <HardDrive className="w-6 h-6" />,
+          color: 'from-emerald-500 to-green-600',
+          terminalColor: 'border-emerald-500/30 bg-emerald-950/40',
+          commandName: 'Defragment Drive',
+          runCommand: window.electronAPI.defragmentDrive,
+        },
+        {
+          id: 'wipe-free-space',
+          title: 'Securely Wipe Free Space',
+          description: 'Overwrite free space to prevent file recovery',
+          icon: <Eraser className="w-6 h-6" />,
+          color: 'from-red-600 to-rose-700',
+          terminalColor: 'border-red-600/30 bg-red-950/40',
+          isDangerous: true,
+          commandName: 'Wipe Free Space',
+          runCommand: window.electronAPI.wipeFreeSpace,
+        },
+        {
+          id: 'manage-disk-partitions',
+          title: 'Manage Disk Partitions',
+          description: 'Open Windows Disk Management tool',
+          icon: <LayoutGrid className="w-6 h-6" />,
+          color: 'from-indigo-500 to-violet-600',
+          terminalColor: 'border-indigo-500/30 bg-indigo-950/40',
+          commandName: 'Manage Disk Partitions',
+          runCommand: window.electronAPI.manageDiskPartitions,
+        },
+      ],
+    },
+  ];
 
-  const clearOutput = (id: string) => {
-    setFeatureOutputs(prev => ({
-      ...prev,
-      [id]: {
-        ...prev[id],
-        output: ''
-      }
-    }))
-  }
+  useEffect(() => {
+    return () => {
+      Object.values(intervalRefs.current).forEach(clearInterval);
+    };
+  }, []);
 
-  const features = [
-    {
-      id: 'sfcScan',
-      title: 'SFC Scan',
-      description: 'System File Checker - scan and repair corrupted system files',
-      icon: <Shield className="w-6 h-6" />,
-      color: 'from-blue-500 to-cyan-500',
-      terminalColor: 'border-blue-500/30 bg-blue-950/40',
-      isDangerous: false,
-      action: () => runCommand('sfcScan', 'sfcScan')
-    },
-    {
-      id: 'dismCheckHealth',
-      title: 'DISM Check Health',
-      description: 'Check if the system image has any corruption',
-      icon: <Activity className="w-6 h-6" />,
-      color: 'from-green-500 to-emerald-500',
-      terminalColor: 'border-green-500/30 bg-green-950/40',
-      isDangerous: false,
-      action: () => runCommand('dismCheckHealth', 'dismCheckHealth')
-    },
-    {
-      id: 'dismScanHealth',
-      title: 'DISM Scan Health',
-      description: 'Scan the system image for corruption (takes longer)',
-      icon: <RefreshCw className="w-6 h-6" />,
-      color: 'from-yellow-500 to-orange-500',
-      terminalColor: 'border-yellow-500/30 bg-yellow-950/40',
-      isDangerous: false,
-      action: () => runCommand('dismScanHealth', 'dismScanHealth')
-    },
-    {
-      id: 'dismRestoreHealth',
-      title: 'DISM Restore Health',
-      description: 'Repair corrupted system image using Windows Update',
-      icon: <Wrench className="w-6 h-6" />,
-      color: 'from-purple-500 to-pink-500',
-      terminalColor: 'border-purple-500/30 bg-purple-950/40',
-      isDangerous: false,
-      action: () => runCommand('dismRestoreHealth', 'dismRestoreHealth')
-    },
-    {
-      id: 'deleteRunHistory',
-      title: 'Delete Run History',
-      description: 'Clear the Run dialog command history',
-      icon: <History className="w-6 h-6" />,
-      color: 'from-orange-500 to-red-500',
-      terminalColor: 'border-orange-500/30 bg-orange-950/40',
-      isDangerous: false,
-      action: () => runCommand('deleteRunHistory', 'deleteRunHistory')
-    },
-    {
-      id: 'deleteTempInternetFiles',
-      title: 'Delete Temporary Internet Files',
-      description: 'Clear Internet Explorer and Edge temporary files',
-      icon: <FileText className="w-6 h-6" />,
-      color: 'from-cyan-500 to-blue-500',
-      terminalColor: 'border-cyan-500/30 bg-cyan-950/40',
-      isDangerous: false,
-      action: () => runCommand('deleteTempInternetFiles', 'deleteTempInternetFiles')
-    },
-    {
-      id: 'clearWindowsUpdateCache',
-      title: 'Clear Windows Update Cache',
-      description: 'Delete downloaded Windows Update files',
-      icon: <Database className="w-6 h-6" />,
-      color: 'from-green-500 to-teal-500',
-      terminalColor: 'border-green-500/30 bg-green-950/40',
-      isDangerous: false,
-      action: () => runCommand('clearWindowsUpdateCache', 'clearWindowsUpdateCache')
-    },
-    {
-      id: 'clearThumbnailCache',
-      title: 'Clear Thumbnail Cache',
-      description: 'Reset file and folder thumbnail previews',
-      icon: <Image className="w-6 h-6" />,
-      color: 'from-purple-500 to-indigo-500',
-      terminalColor: 'border-purple-500/30 bg-purple-950/40',
-      isDangerous: false,
-      action: () => runCommand('clearThumbnailCache', 'clearThumbnailCache')
-    },
-    {
-      id: 'clearMicrosoftStoreCache',
-      title: 'Clear Microsoft Store Cache',
-      description: 'Reset Microsoft Store and fix download issues',
-      icon: <Store className="w-6 h-6" />,
-      color: 'from-blue-600 to-indigo-600',
-      terminalColor: 'border-blue-600/30 bg-blue-950/40',
-      isDangerous: false,
-      action: () => runCommand('clearMicrosoftStoreCache', 'clearMicrosoftStoreCache')
-    },
-    {
-      id: 'clearOutlookCache',
-      title: 'Clear Microsoft Outlook Cache',
-      description: 'Clear Outlook cache to fix sync issues',
-      icon: <Mail className="w-6 h-6" />,
-      color: 'from-blue-500 to-purple-500',
-      terminalColor: 'border-blue-500/30 bg-blue-950/40',
-      isDangerous: false,
-      action: () => runCommand('clearOutlookCache', 'clearOutlookCache')
-    },
-    {
-      id: 'clearTeamsCache',
-      title: 'Clear Microsoft Teams Cache',
-      description: 'Clear Teams cache to fix issues',
-      icon: <MessageSquare className="w-6 h-6" />,
-      color: 'from-purple-600 to-pink-600',
-      terminalColor: 'border-purple-600/30 bg-purple-950/40',
-      isDangerous: false,
-      action: () => runCommand('clearTeamsCache', 'clearTeamsCache')
-    },
-    {
-      id: 'clearRecycleBin',
-      title: 'Clear Recycle Bin',
-      description: 'Permanently delete all files in Recycle Bin',
-      icon: <Trash2 className="w-6 h-6" />,
-      color: 'from-red-500 to-rose-600',
-      terminalColor: 'border-red-500/30 bg-red-950/40',
-      isDangerous: true,
-      action: () => runCommand('clearRecycleBin', 'clearRecycleBin')
-    },
-    {
-      id: 'deleteOldWindows',
-      title: 'Delete Old Windows',
-      description: 'Remove Windows.old folder (previous Windows installation)',
-      icon: <HardDrive className="w-6 h-6" />,
-      color: 'from-amber-500 to-red-600',
-      terminalColor: 'border-amber-500/30 bg-amber-950/40',
-      isDangerous: true,
-      action: () => runCommand('deleteOldWindows', 'deleteOldWindows')
-    },
-    {
-      id: 'defragmentDrive',
-      title: 'Perform Defragmentation',
-      description: 'Optimize drive performance by defragmenting',
-      icon: <HardDrive className="w-6 h-6" />,
-      color: 'from-emerald-500 to-green-600',
-      terminalColor: 'border-emerald-500/30 bg-emerald-950/40',
-      isDangerous: false,
-      action: () => runCommand('defragmentDrive', 'defragmentDrive')
-    },
-    {
-      id: 'wipeFreeSpace',
-      title: 'Securely Wipe Free Space',
-      description: 'Overwrite free space to prevent file recovery',
-      icon: <Eraser className="w-6 h-6" />,
-      color: 'from-red-600 to-rose-700',
-      terminalColor: 'border-red-600/30 bg-red-950/40',
-      isDangerous: true,
-      action: () => runCommand('wipeFreeSpace', 'wipeFreeSpace')
-    },
-    {
-      id: 'manageDiskPartitions',
-      title: 'Manage Disk Partitions',
-      description: 'Open Windows Disk Management',
-      icon: <LayoutGrid className="w-6 h-6" />,
-      color: 'from-indigo-500 to-violet-600',
-      terminalColor: 'border-indigo-500/30 bg-indigo-950/40',
-      isDangerous: false,
-      action: () => runCommand('manageDiskPartitions', 'manageDiskPartitions')
-    },
-    {
-      id: 'deleteRecentItems',
-      title: 'Delete Recent Items History',
-      description: 'Clear File Explorer recent items and jump lists',
-      icon: <History className="w-6 h-6" />,
-      color: 'from-slate-500 to-gray-600',
-      terminalColor: 'border-slate-500/30 bg-slate-950/40',
-      isDangerous: false,
-      action: () => runCommand('deleteRecentItems', 'deleteRecentItems')
-    },
-    {
-      id: 'deleteAddressBarHistory',
-      title: 'Delete Address Bar History',
-      description: 'Clear File Explorer and Run dialog address history',
-      icon: <MapPin className="w-6 h-6" />,
-      color: 'from-sky-500 to-blue-600',
-      terminalColor: 'border-sky-500/30 bg-sky-950/40',
-      isDangerous: false,
-      action: () => runCommand('deleteAddressBarHistory', 'deleteAddressBarHistory')
-    }
-  ]
+  const renderFeatureCard = (feature: Feature) => {
+    const taskId = feature.id;
+    const isRunning = isTaskRunning(taskId);
+    const progress = getTaskProgress(taskId);
+    const output = getTaskOutput(taskId);
+    const outputOpen = isTaskOutputOpen(taskId);
+
+    return (
+      <div
+        key={taskId}
+        className={`glass rounded-2xl overflow-hidden border-2 transition-all duration-300 ${
+          feature.isDangerous
+            ? 'border-red-500/30 hover:border-red-500/50'
+            : 'border-transparent hover:border-primary-500/50'
+        }`}
+      >
+        <div className="p-6">
+          <div className="flex items-start gap-4">
+            <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${feature.color} flex items-center justify-center shrink-0`}>
+              {feature.icon}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className={`text-base font-semibold ${feature.isDangerous ? 'text-red-300' : 'text-white'}`}>
+                {feature.title}
+              </h3>
+              <p className="text-gray-400 text-xs mt-1 line-clamp-2">{feature.description}</p>
+              <div className="flex items-center gap-2 mt-3">
+                {isRunning ? (
+                  <>
+                    <button
+                      onClick={() => handleStopTask(taskId)}
+                      className="flex-1 px-3 py-2 rounded-lg text-xs font-medium bg-red-500/20 hover:bg-red-500/30 text-red-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      <Square className="w-3 h-3 fill-current" />
+                      Stop
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => handleRunCommand(feature)}
+                    className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                      feature.isDangerous
+                        ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
+                        : 'bg-primary-500/20 text-primary-300 hover:bg-primary-500/30'
+                    }`}
+                  >
+                    Run
+                  </button>
+                )}
+                {output && (
+                  <button
+                    onClick={() => toggleTaskOutput(taskId)}
+                    className="p-2 bg-dark-700 rounded-lg hover:bg-dark-600 transition-colors"
+                  >
+                    {outputOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+                )}
+              </div>
+              {isRunning && (
+                <div className="mt-2">
+                  <div className="flex justify-between text-xs text-gray-400 mb-1">
+                    <span>Progress</span>
+                    <span>{progress}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-dark-700 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-200 ${
+                        feature.isDangerous ? 'bg-red-500' : 'bg-gradient-to-r from-primary-500 to-accent-500'
+                      }`}
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        {output && outputOpen && (
+          <div className={`border-t ${feature.terminalColor} p-3`}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
+                <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                <span className="ml-2 text-[10px] text-gray-400 font-mono">output</span>
+              </div>
+              <div className="flex gap-0.5">
+                <button
+                  onClick={() => navigator.clipboard.writeText(output)}
+                  className="p-1 hover:bg-dark-700 rounded transition-colors"
+                  title="Copy"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => clearTaskOutput(taskId)}
+                  className="p-1 hover:bg-dark-700 rounded transition-colors"
+                  title="Clear"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+            <pre className="bg-dark-950/50 rounded-lg p-2.5 text-xs text-gray-200 overflow-auto max-h-48 whitespace-pre-wrap font-mono">
+              {output}
+            </pre>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-white">System repair and clean</h2>
-        <p className="text-gray-400 mt-1">Scan, repair, and clean your system files and settings</p>
+        <h2 className="text-2xl font-bold text-white">System Repair & Clean</h2>
+        <p className="text-gray-400 mt-1">Keep your PC healthy, fast, and clean</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {features.map(feature => (
-          <div
-            key={feature.id}
-            className={`glass rounded-2xl overflow-hidden border-2 transition-all duration-300 ${
-              feature.isDangerous ? 'border-red-500/30 hover:border-red-500/50' : 'border-transparent hover:border-primary-500/50'
-            }`}
-          >
-            <div className="p-6">
-              <div className="flex items-start gap-4">
-                <div className={`w-14 h-14 rounded-xl bg-gradient-to-br ${feature.color} flex items-center justify-center shrink-0`}>
-                  {feature.icon}
+      <div className="space-y-4">
+        {categories.map((category, index) => {
+          const categoryId = `category-${index}`;
+          return (
+            <div key={categoryId} className="glass rounded-2xl overflow-hidden border border-dark-600">
+              <button
+                onClick={() => toggleCategory(categoryId)}
+                className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-dark-750/50 transition-colors"
+              >
+                <div>
+                  <h3 className="text-lg font-semibold text-white">{category.title}</h3>
+                  <p className="text-gray-400 text-sm mt-0.5">{category.description}</p>
                 </div>
-                <div className="flex-1">
-                  <h3 className={`text-lg font-semibold ${feature.isDangerous ? 'text-red-300' : 'text-white'}`}>
-                    {feature.title}
-                  </h3>
-                  <p className="text-gray-400 text-sm mt-1">{feature.description}</p>
-                  <div className="flex items-center gap-2 mt-4">
-                    <button
-                      onClick={feature.action}
-                      disabled={loadingStates[feature.id]}
-                      className={`flex-1 px-4 py-2 rounded-lg font-medium transition-all ${
-                        feature.isDangerous
-                          ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
-                          : 'bg-primary-500/20 text-primary-300 hover:bg-primary-500/30'
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
-                      {loadingStates[feature.id] ? `Running... ${progressPercentages[feature.id] || 0}%` : 'Run'}
-                    </button>
-                    {featureOutputs[feature.id]?.output && (
-                      <button
-                        onClick={() => toggleOutput(feature.id)}
-                        className="p-2 bg-dark-700 rounded-lg hover:bg-dark-600 transition-colors"
-                      >
-                        {featureOutputs[feature.id].isOpen ? (
-                          <ChevronUp className="w-5 h-5" />
-                        ) : (
-                          <ChevronDown className="w-5 h-5" />
-                        )}
-                      </button>
-                    )}
+                {openCategories[categoryId] ? (
+                  <ChevronUp className="w-5 h-5 text-gray-400" />
+                ) : (
+                  <ChevronDown className="w-5 h-5 text-gray-400" />
+                )}
+              </button>
+              {openCategories[categoryId] && (
+                <div className="border-t border-dark-600 p-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {category.features.map(renderFeatureCard)}
                   </div>
-                  {loadingStates[feature.id] && (
-                    <div className="mt-3">
-                      <div className="flex justify-between text-xs text-gray-400 mb-1">
-                        <span>Progress</span>
-                        <span>{progressPercentages[feature.id] || 0}%</span>
-                      </div>
-                      <div className="w-full h-2 bg-dark-700 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full transition-all duration-200 ${
-                            feature.isDangerous ? 'bg-red-500' : 'bg-gradient-to-r from-primary-500 to-accent-500'
-                          }`}
-                          style={{ width: `${progressPercentages[feature.id] || 0}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
                 </div>
-              </div>
+              )}
             </div>
-            {featureOutputs[feature.id]?.output && featureOutputs[feature.id].isOpen && (
-              <div className={`border-t ${feature.terminalColor} p-4`}>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-red-500" />
-                    <div className="w-3 h-3 rounded-full bg-yellow-500" />
-                    <div className="w-3 h-3 rounded-full bg-green-500" />
-                    <span className="ml-2 text-xs text-gray-400 font-mono">cmd.exe</span>
-                  </div>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => copyOutput(feature.id)}
-                      className="p-1 hover:bg-dark-700 rounded transition-colors"
-                      title="Copy output"
-                    >
-                      <Copy className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => clearOutput(feature.id)}
-                      className="p-1 hover:bg-dark-700 rounded transition-colors"
-                      title="Clear output"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-                <pre className="bg-dark-950/50 rounded-lg p-3 text-sm text-gray-200 overflow-auto max-h-64 whitespace-pre-wrap font-mono">
-                  {featureOutputs[feature.id].output}
-                </pre>
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default SystemRepairAndClean
+export default SystemRepairAndClean;

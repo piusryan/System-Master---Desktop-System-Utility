@@ -767,3 +767,111 @@ ipcMain.handle('select-folder-dialog', async () => {
   })
   return canceled ? null : filePaths[0]
 })
+
+// Browser Extension Functions
+ipcMain.handle('scanBrowserExtensions', async () => {
+  const extensions: any[] = []
+  const homeDir = process.env.USERPROFILE || ''
+  if (!homeDir) return extensions
+
+  // Scan Chrome
+  try {
+    const chromeExtDir = path.join(homeDir, 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Default', 'Extensions')
+    if (fs.existsSync(chromeExtDir)) {
+      const extFolders = fs.readdirSync(chromeExtDir, { withFileTypes: true }).filter(d => d.isDirectory())
+      for (const ext of extFolders) {
+        const extPath = path.join(chromeExtDir, ext.name)
+        const versions = fs.readdirSync(extPath, { withFileTypes: true }).filter(d => d.isDirectory())
+        if (versions.length > 0) {
+          const manifestPath = path.join(extPath, versions[0].name, 'manifest.json')
+          if (fs.existsSync(manifestPath)) {
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
+            extensions.push({
+              id: ext.name,
+              name: manifest.name || 'Unknown',
+              description: manifest.description,
+              version: manifest.version || '0.0.0',
+              permissions: manifest.permissions || manifest.optional_permissions || [],
+              isSideloaded: false, // Default, can check install source later
+              browser: 'chrome' as const,
+              path: extPath
+            })
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Chrome scan error:', err)
+  }
+
+  // Scan Edge
+  try {
+    const edgeExtDir = path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'Edge', 'User Data', 'Default', 'Extensions')
+    if (fs.existsSync(edgeExtDir)) {
+      const extFolders = fs.readdirSync(edgeExtDir, { withFileTypes: true }).filter(d => d.isDirectory())
+      for (const ext of extFolders) {
+        const extPath = path.join(edgeExtDir, ext.name)
+        const versions = fs.readdirSync(extPath, { withFileTypes: true }).filter(d => d.isDirectory())
+        if (versions.length > 0) {
+          const manifestPath = path.join(extPath, versions[0].name, 'manifest.json')
+          if (fs.existsSync(manifestPath)) {
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
+            extensions.push({
+              id: ext.name,
+              name: manifest.name || 'Unknown',
+              description: manifest.description,
+              version: manifest.version || '0.0.0',
+              permissions: manifest.permissions || manifest.optional_permissions || [],
+              isSideloaded: false,
+              browser: 'edge' as const,
+              path: extPath
+            })
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Edge scan error:', err)
+  }
+
+  // Scan Firefox
+  try {
+    const ffProfilesDir = path.join(homeDir, 'AppData', 'Roaming', 'Mozilla', 'Firefox', 'Profiles')
+    if (fs.existsSync(ffProfilesDir)) {
+      const profiles = fs.readdirSync(ffProfilesDir, { withFileTypes: true }).filter(d => d.isDirectory())
+      for (const profile of profiles) {
+        const extDir = path.join(ffProfilesDir, profile.name, 'extensions')
+        if (fs.existsSync(extDir)) {
+          const extFiles = fs.readdirSync(extDir, { withFileTypes: true })
+          for (const ext of extFiles) {
+            if (ext.name.endsWith('.xpi')) {
+              // For simplicity, just add a placeholder, we can extract xpi if needed later
+              extensions.push({
+                id: ext.name.replace('.xpi', ''),
+                name: ext.name.replace('.xpi', ''),
+                description: 'Firefox extension',
+                version: '0.0.0',
+                permissions: [],
+                isSideloaded: true,
+                browser: 'firefox' as const,
+                path: path.join(extDir, ext.name)
+              })
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Firefox scan error:', err)
+  }
+
+  return extensions
+})
+
+ipcMain.handle('disableBrowserExtension', async (_, id: string, browser: 'chrome' | 'edge' | 'firefox') => {
+  console.log(`Disabling extension ${id} in ${browser} not implemented (requires registry edits or browser API access)`)
+})
+
+ipcMain.handle('removeBrowserExtension', async (_, id: string, browser: 'chrome' | 'edge' | 'firefox') => {
+  console.log(`Removing extension ${id} in ${browser} not implemented (requires registry edits or browser API access)`)
+})

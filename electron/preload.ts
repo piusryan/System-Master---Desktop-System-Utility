@@ -58,4 +58,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('unlock-file-iobit', targetPath, actionType, modifier, actionArgs),
   selectFileDialog: () => ipcRenderer.invoke('select-file-dialog'),
   selectFolderDialog: () => ipcRenderer.invoke('select-folder-dialog'),
+  scanBrowserExtensions: () => ipcRenderer.invoke('scanBrowserExtensions'),
+  disableBrowserExtension: (id: string, browser: 'chrome' | 'edge' | 'firefox') => ipcRenderer.invoke('disableBrowserExtension', id, browser),
+  removeBrowserExtension: (id: string, browser: 'chrome' | 'edge' | 'firefox') => ipcRenderer.invoke('removeBrowserExtension', id, browser),
 })
