@@ -869,9 +869,327 @@ ipcMain.handle('scanBrowserExtensions', async () => {
 })
 
 ipcMain.handle('disableBrowserExtension', async (_, id: string, browser: 'chrome' | 'edge' | 'firefox') => {
-  console.log(`Disabling extension ${id} in ${browser} not implemented (requires registry edits or browser API access)`)
+  // To disable, we can modify the Preferences JSON file
+  const homeDir = process.env.USERPROFILE || ''
+  if (!homeDir) return
+
+  if (browser === 'chrome' || browser === 'edge') {
+    const userDataPath = browser === 'chrome'
+      ? path.join(homeDir, 'AppData', 'Local', 'Google', 'Chrome', 'User Data')
+      : path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'Edge', 'User Data')
+    
+    // Check for Default profile first
+    const prefsPath = path.join(userDataPath, 'Default', 'Preferences')
+    if (fs.existsSync(prefsPath)) {
+      try {
+        const prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf-8'))
+        if (prefs.extensions && prefs.extensions.settings) {
+          if (prefs.extensions.settings[id]) {
+            prefs.extensions.settings[id].state = 0 // 0 = disabled, 1 = enabled
+            fs.writeFileSync(prefsPath, JSON.stringify(prefs))
+          }
+        }
+      } catch (err) {
+        console.error('Failed to disable extension:', err)
+      }
+    }
+  }
 })
 
 ipcMain.handle('removeBrowserExtension', async (_, id: string, browser: 'chrome' | 'edge' | 'firefox') => {
-  console.log(`Removing extension ${id} in ${browser} not implemented (requires registry edits or browser API access)`)
+  const homeDir = process.env.USERPROFILE || ''
+  if (!homeDir) return
+
+  if (browser === 'chrome' || browser === 'edge') {
+    // Remove extension folder
+    const extBasePath = browser === 'chrome'
+      ? path.join(homeDir, 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Default', 'Extensions')
+      : path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'Edge', 'User Data', 'Default', 'Extensions')
+    const extPath = path.join(extBasePath, id)
+    if (fs.existsSync(extPath)) {
+      try {
+        fs.rmSync(extPath, { recursive: true, force: true })
+      } catch (err) {
+        console.error('Failed to remove extension folder:', err)
+      }
+    }
+
+    // Also remove from Preferences file
+    const userDataPath = browser === 'chrome'
+      ? path.join(homeDir, 'AppData', 'Local', 'Google', 'Chrome', 'User Data')
+      : path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'Edge', 'User Data')
+    const prefsPath = path.join(userDataPath, 'Default', 'Preferences')
+    if (fs.existsSync(prefsPath)) {
+      try {
+        const prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf-8'))
+        if (prefs.extensions && prefs.extensions.settings) {
+          delete prefs.extensions.settings[id]
+          fs.writeFileSync(prefsPath, JSON.stringify(prefs))
+        }
+      } catch (err) {
+        console.error('Failed to update Preferences file:', err)
+      }
+    }
+  } else if (browser === 'firefox') {
+    // Remove Firefox extension
+    const ffProfilesDir = path.join(homeDir, 'AppData', 'Roaming', 'Mozilla', 'Firefox', 'Profiles')
+    if (fs.existsSync(ffProfilesDir)) {
+      const profiles = fs.readdirSync(ffProfilesDir, { withFileTypes: true }).filter(d => d.isDirectory())
+      for (const profile of profiles) {
+        const extDir = path.join(ffProfilesDir, profile.name, 'extensions')
+        if (fs.existsSync(extDir)) {
+          const extFiles = fs.readdirSync(extDir, { withFileTypes: true })
+          for (const ext of extFiles) {
+            if (ext.name.includes(id) || ext.name.startsWith(id)) {
+              try {
+                fs.unlinkSync(path.join(extDir, ext.name))
+              } catch (err) {
+                console.error('Failed to remove Firefox extension:', err)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+})
+
+
+// ============================================================================
+// COMPLETE UNINSTALLER IPC HANDLERS
+// ============================================================================
+
+// Helper to scan a directory for related files/folders
+const scanDirectoryForFiles = (dir: string, baseName: string, maxDepth = 3): any[] => {
+  const results: any[] = []
+  const MAX_FILES = 150 // Limit to prevent UI overload
+  
+  const scan = (currentDir: string, depth: number) => {
+    if (depth > maxDepth || results.length >= MAX_FILES) return
+    
+    try {
+      const entries = fs.readdirSync(currentDir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (results.length >= MAX_FILES) break
+        
+        const fullPath = path.join(currentDir, entry.name)
+        try {
+          const stat = fs.statSync(fullPath)
+          
+          // Skip very large files (> 500MB)
+          if (stat.size > 500 * 1024 * 1024) continue
+          
+          const item: any = {
+            id: `${Date.now()}_${Math.random().toString(36)}`,
+            path: fullPath,
+            type: entry.isDirectory() ? 'directory' : 'file',
+            size: stat.size || 0,
+            modifiedDate: stat.mtime,
+            isSystemFile: fullPath.toLowerCase().includes('\\windows\\') || fullPath.toLowerCase().includes('\\system32\\')
+          }
+          results.push(item)
+          
+          // Recurse into directories
+          if (entry.isDirectory() && depth < maxDepth) {
+            const dirNameLower = entry.name.toLowerCase()
+            // Prioritize relevant directories
+            if (
+              dirNameLower.includes(baseName) ||
+              dirNameLower === 'config' ||
+              dirNameLower === 'data' ||
+              dirNameLower === 'temp' ||
+              dirNameLower === 'cache' ||
+              depth === 0 // Always recurse first level
+            ) {
+              scan(fullPath, depth + 1)
+            }
+          }
+        } catch {
+          // Skip items we can't access
+        }
+      }
+    } catch {
+      // Skip directories we can't access
+    }
+  }
+  
+  scan(dir, 0)
+  return results.slice(0, MAX_FILES)
+}
+
+// Helper to scan registry for related keys/values
+const scanRegistryForProgram = async (exePath: string): Promise<any[]> => {
+  const exeName = path.basename(exePath, '.exe').toLowerCase()
+  const exeDir = path.dirname(exePath).toLowerCase()
+  const results: any[] = []
+
+  // Use reg.exe query which is more reliable than PowerShell for registry scanning
+  const registryPaths = [
+    { hive: 'HKCU', path: 'Software' },
+    { hive: 'HKLM', path: 'Software' },
+    { hive: 'HKCU', path: 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' },
+    { hive: 'HKLM', path: 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' },
+  ]
+
+  for (const { hive, path: regPath } of registryPaths) {
+    try {
+      const fullPath = `${hive}\\${regPath}`
+      
+      // Use reg query command which is more reliable
+      const { stdout, stderr } = await execCommand(`reg query "${fullPath}" /s /v ""`)
+      
+      if (stdout) {
+        const lines = stdout.split('\n')
+        let currentKey = ''
+        
+        for (const line of lines) {
+          const trimmed = line.trim()
+          
+          // Registry keys start with the full path
+          if (trimmed.startsWith(fullPath) || trimmed.match(/^HKEY_/)) {
+            currentKey = trimmed
+          }
+          
+          // Value lines contain registry values
+          if (trimmed.includes('REG_') && currentKey) {
+            // Check if line contains exe name or path
+            if (
+              trimmed.toLowerCase().includes(exeName) ||
+              trimmed.toLowerCase().includes(exeDir.toLowerCase()) ||
+              currentKey.toLowerCase().includes(exeName)
+            ) {
+              // Extract the key path
+              const keyPath = currentKey.replace(/^HKEY_LOCAL_MACHINE\\/, 'HKLM\\').replace(/^HKEY_CURRENT_USER\\/, 'HKCU\\')
+              
+              // Add only if not already present
+              if (!results.find(r => r.path === keyPath)) {
+                results.push({
+                  id: `reg_${Date.now()}_${Math.random().toString(36)}`,
+                  hive: hive,
+                  path: keyPath,
+                  name: keyPath.split('\\').pop() || keyPath,
+                  type: 'key'
+                })
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`Registry scan error for ${regPath}:`, e)
+    }
+  }
+
+  // Remove duplicates and limit results to prevent UI overload
+  const uniqueResults = Array.from(new Map(results.map(r => [r.path, r])).values()).slice(0, 500)
+  console.log(`Registry scan found ${uniqueResults.length} related entries for ${exeName}`)
+  return uniqueResults
+}
+
+// Helper to delete files (with admin rights fallback)
+const deleteFiles = async (filePaths: string[]) => {
+  const results = []
+  for (const filePath of filePaths) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const stat = fs.statSync(filePath)
+        if (stat.isDirectory()) {
+          fs.rmSync(filePath, { recursive: true, force: true })
+        } else {
+          fs.unlinkSync(filePath)
+        }
+        results.push({ path: filePath, success: true })
+      }
+    } catch (error) {
+      console.error('Delete error:', error)
+      results.push({ path: filePath, success: false, error: String(error) })
+    }
+  }
+  return results
+}
+
+// Helper to delete registry keys
+const deleteRegistryKeys = async (registryPaths: string[]) => {
+  const results = []
+  for (const regPath of registryPaths) {
+    try {
+      const hive = regPath.split('\\')[0]
+      const subPath = regPath.split('\\').slice(1).join('\\')
+      const psCmd = `Remove-Item -Path '${regPath}' -Recurse -Force -ErrorAction SilentlyContinue`
+      await execCommand(`powershell -Command "${psCmd}"`)
+      results.push({ path: regPath, success: true })
+    } catch (error) {
+      console.error('Registry delete error:', error)
+      results.push({ path: regPath, success: false, error: String(error) })
+    }
+  }
+  return results
+}
+
+// IPC handler to scan an EXE's related files and registry
+ipcMain.handle('uninstaller-scan-exe', async (_, exePath: string) => {
+  try {
+    const startTime = Date.now()
+    const exeName = path.basename(exePath, '.exe')
+    const exeDir = path.dirname(exePath)
+    const exeStat = fs.statSync(exePath)
+    
+    // Collect related locations
+    const locationsToScan: string[] = [
+      exeDir,
+      path.join(process.env.LOCALAPPDATA || '', exeName),
+      path.join(process.env.APPDATA || '', exeName),
+      path.join(process.env.PUBLIC || '', exeName)
+    ].filter(l => l && l.length > 0 && fs.existsSync(l))
+
+    // Scan for related files
+    const allFiles: any[] = []
+    for (const loc of locationsToScan) {
+      allFiles.push(...scanDirectoryForFiles(loc, exeName.toLowerCase()))
+    }
+
+    // Add the EXE itself
+    allFiles.unshift({
+      id: `exe_${Date.now()}`,
+      path: exePath,
+      type: 'file',
+      size: exeStat.size || 0,
+      modifiedDate: exeStat.mtime,
+      isSystemFile: false
+    })
+
+    // Scan registry
+    const registryItems = await scanRegistryForProgram(exePath)
+
+    return {
+      id: `scan_${Date.now()}`,
+      timestamp: new Date(),
+      exePath: exePath,
+      exeName: exeName,
+      files: allFiles,
+      registry: registryItems,
+      scanDurationMs: Date.now() - startTime
+    }
+  } catch (error) {
+    console.error('EXE scan failed:', error)
+    return {
+      id: `scan_${Date.now()}`,
+      timestamp: new Date(),
+      exePath: '',
+      exeName: '',
+      files: [],
+      registry: [],
+      scanDurationMs: 0
+    }
+  }
+})
+
+// IPC handler to delete selected files and registry
+ipcMain.handle('uninstaller-delete', async (_, filePaths: string[], registryPaths: string[]) => {
+  const fileResults = await deleteFiles(filePaths)
+  const registryResults = await deleteRegistryKeys(registryPaths)
+  return {
+    files: fileResults,
+    registry: registryResults
+  }
 })

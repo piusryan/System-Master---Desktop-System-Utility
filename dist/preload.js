@@ -60,4 +60,6 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
     scanBrowserExtensions: () => electron_1.ipcRenderer.invoke('scanBrowserExtensions'),
     disableBrowserExtension: (id, browser) => electron_1.ipcRenderer.invoke('disableBrowserExtension', id, browser),
     removeBrowserExtension: (id, browser) => electron_1.ipcRenderer.invoke('removeBrowserExtension', id, browser),
+    uninstallerScanExe: (exePath) => electron_1.ipcRenderer.invoke('uninstaller-scan-exe', exePath),
+    uninstallerDelete: (filePaths, registryPaths) => electron_1.ipcRenderer.invoke('uninstaller-delete', filePaths, registryPaths),
 });

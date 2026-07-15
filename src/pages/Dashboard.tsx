@@ -1,5 +1,5 @@
 import React from 'react'
-import { Cpu, HardDrive, Activity, Zap, ArrowRight, Wrench, Hammer } from 'lucide-react'
+import { Cpu, HardDrive, Activity, Zap, ArrowRight, Wrench, Hammer, Trash2 } from 'lucide-react'
 
 interface DashboardProps {
   setActivePage: (page: string) => void
@@ -27,6 +27,13 @@ const Dashboard: React.FC<DashboardProps> = ({ setActivePage }) => {
       icon: <Zap className="w-6 h-6" />,
       color: 'from-blue-500 to-cyan-600',
       page: 'network',
+    },
+    {
+      title: 'Complete Uninstaller',
+      description: 'Remove leftover files and registry entries from uninstalled programs',
+      icon: <Trash2 className="w-6 h-6" />,
+      color: 'from-red-500 to-red-600',
+      page: 'complete-uninstaller',
     },
   ]
 

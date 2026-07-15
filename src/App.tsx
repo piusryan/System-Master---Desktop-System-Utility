@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Zap, Wifi, Wrench, Hammer, Unlock, Globe } from 'lucide-react'
+import { Zap, Wifi, Wrench, Hammer, Unlock, Globe, Trash2 } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
 import Network from './pages/Network'
@@ -7,9 +7,10 @@ import SystemRepairAndClean from './pages/SystemRepairAndClean'
 import FixRepair from './pages/FixRepair'
 import FileUnlocker from './pages/FileUnlocker'
 import BrowserControl from './pages/BrowserControl'
+import CompleteUninstaller from './pages/CompleteUninstaller'
 import { TaskManagerProvider } from './contexts/TaskManagerContext'
 
-type Page = 'dashboard' | 'network' | 'system-repair-and-clean' | 'fix-repair' | 'file-unlocker' | 'browser-control'
+type Page = 'dashboard' | 'network' | 'system-repair-and-clean' | 'fix-repair' | 'file-unlocker' | 'browser-control' | 'complete-uninstaller'
 
 function App() {
   const [activePage, setActivePage] = useState<Page>('dashboard')
@@ -21,6 +22,7 @@ function App() {
     { id: 'network', icon: <Wifi className="w-5 h-5" />, label: 'Network & Connectivity' },
     { id: 'file-unlocker', icon: <Unlock className="w-5 h-5 text-accent-400" />, label: 'File Unlocker' },
     { id: 'browser-control', icon: <Globe className="w-5 h-5 text-cyan-400" />, label: 'Browser Control' },
+    { id: 'complete-uninstaller', icon: <Trash2 className="w-5 h-5 text-red-400" />, label: 'Complete Uninstaller' },
   ]
 
   const renderPage = () => {
@@ -37,6 +39,8 @@ function App() {
         return <FileUnlocker />
       case 'browser-control':
         return <BrowserControl />
+      case 'complete-uninstaller':
+        return <CompleteUninstaller />
       default:
         return <Dashboard setActivePage={setActivePage as any} />
     }

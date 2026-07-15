@@ -68,6 +68,8 @@ export interface ElectronAPI {
   scanBrowserExtensions: () => Promise<Array<{ id: string; name: string; description?: string; version: string; permissions: string[]; isSideloaded: boolean; browser: 'chrome' | 'edge' | 'firefox'; path?: string; iconUrl?: string }>>
   disableBrowserExtension: (id: string, browser: 'chrome' | 'edge' | 'firefox') => Promise<void>
   removeBrowserExtension: (id: string, browser: 'chrome' | 'edge' | 'firefox') => Promise<void>
+  uninstallerScanExe: (exePath: string) => Promise<any>,
+  uninstallerDelete: (filePaths: string[], registryPaths: string[]) => Promise<any>
 }
 
 declare global {
